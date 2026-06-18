@@ -1,0 +1,4 @@
+{% macro element(element) -%}
+<{{ element.name }}>{%- if element.children|length > 0 -%}{%- for child in element.children -%}{{ _self.element(child) }}{%- endfor -%}{%- else -%}{{ element.value|e('html') }}{%- endif -%}</{{ element.name }}>
+{%- endmacro -%}
+<record>{%- for element in record.elements -%}{{ _self.element(element) }}{%- endfor -%}</record>
