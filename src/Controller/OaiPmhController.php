@@ -25,7 +25,7 @@ final class OaiPmhController
     private const OAI_SCHEMA = 'http://www.openarchives.org/OAI/2.0/OAI-PMH.xsd';
     private const SCHEMA_LOCATION = self::OAI_NAMESPACE.' '.self::OAI_SCHEMA;
     private const METADATA_PREFIX = 'oai_adlib';
-    private const PAGE_SIZE = 1000;
+    private const PAGE_SIZE = 100;
 
     public function __construct(
         private readonly RecordRepository $records,
