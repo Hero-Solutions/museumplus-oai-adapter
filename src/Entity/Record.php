@@ -12,6 +12,7 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Entity(repositoryClass: RecordRepository::class)]
 #[ORM\Table(name: 'records')]
 #[ORM\UniqueConstraint(name: 'uniq_records_oai_identifier', columns: ['oai_identifier'])]
+#[ORM\Index(name: 'idx_records_datestamp_id', columns: ['datestamp', 'id'])]
 #[ORM\Index(name: 'idx_records_set_datestamp', columns: ['set_spec', 'datestamp'])]
 #[ORM\Index(name: 'idx_records_museumplus_id', columns: ['museumplus_id'])]
 final class Record

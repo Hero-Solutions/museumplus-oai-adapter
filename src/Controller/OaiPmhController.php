@@ -130,23 +130,35 @@ final class OaiPmhController
             throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
         }
 
-        $records = $this->records->findForHarvest($state['from'], $state['until'], $state['set'], self::PAGE_SIZE, $state['offset']);
-
-        if ($records === []) {
-            throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
-        }
-
         $list = $this->appendElement($document->documentElement, $verb);
 
-        foreach ($records as $record) {
-            if ($includeMetadata) {
-                $this->appendRecord($list, $record, true);
-            } else {
-                $this->appendHeader($list, $record);
+        if ($includeMetadata) {
+            $records = $this->records->findForHarvest($state['from'], $state['until'], $state['set'], self::PAGE_SIZE, $state['offset']);
+
+            if ($records === []) {
+                throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
             }
+
+            foreach ($records as $record) {
+                $this->appendRecord($list, $record, true);
+            }
+
+            $pageCount = count($records);
+        } else {
+            $headers = $this->records->findHeadersForHarvest($state['from'], $state['until'], $state['set'], self::PAGE_SIZE, $state['offset']);
+
+            if ($headers === []) {
+                throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
+            }
+
+            foreach ($headers as $header) {
+                $this->appendHeaderValues($list, $header['oaiIdentifier'], $header['datestamp'], $header['setSpec']);
+            }
+
+            $pageCount = count($headers);
         }
 
-        $nextOffset = $state['offset'] + count($records);
+        $nextOffset = $state['offset'] + $pageCount;
 
         if ($nextOffset < $total) {
             $token = $this->appendText($list, 'resumptionToken', $this->encodeToken([
@@ -178,10 +190,15 @@ final class OaiPmhController
 
     private function appendHeader(DOMElement $parent, Record $record): void
     {
+        $this->appendHeaderValues($parent, $record->getOaiIdentifier(), $record->getDatestamp(), $record->getSetSpec());
+    }
+
+    private function appendHeaderValues(DOMElement $parent, string $identifier, DateTimeImmutable $datestamp, string $setSpec): void
+    {
         $header = $this->appendElement($parent, 'header');
-        $this->appendText($header, 'identifier', $record->getOaiIdentifier());
-        $this->appendText($header, 'datestamp', $this->formatDatestamp($record->getDatestamp()));
-        $this->appendText($header, 'setSpec', $record->getSetSpec());
+        $this->appendText($header, 'identifier', $identifier);
+        $this->appendText($header, 'datestamp', $this->formatDatestamp($datestamp));
+        $this->appendText($header, 'setSpec', $setSpec);
     }
 
     /**

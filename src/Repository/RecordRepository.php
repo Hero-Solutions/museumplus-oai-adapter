@@ -6,6 +6,7 @@ namespace App\Repository;
 
 use App\Entity\Record;
 use DateTimeImmutable;
+use DateTimeZone;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\ORM\QueryBuilder;
 use Doctrine\Persistence\ManagerRegistry;
@@ -61,6 +62,54 @@ final class RecordRepository extends ServiceEntityRepository
             ->setFirstResult($offset);
 
         return $queryBuilder->getQuery()->getResult();
+    }
+
+    /**
+     * @return list<array{oaiIdentifier: string, datestamp: DateTimeImmutable, setSpec: string}>
+     */
+    public function findHeadersForHarvest(
+        ?DateTimeImmutable $from,
+        ?DateTimeImmutable $until,
+        ?string $setSpec,
+        int $limit,
+        int $offset,
+    ): array {
+        $queryBuilder = $this->getEntityManager()->getConnection()->createQueryBuilder()
+            ->select('r.oai_identifier', 'r.datestamp', 'r.set_spec')
+            ->from('records', 'r')
+            ->orderBy('r.datestamp', 'ASC')
+            ->addOrderBy('r.id', 'ASC')
+            ->setMaxResults($limit)
+            ->setFirstResult($offset);
+
+        if ($from !== null) {
+            $queryBuilder
+                ->andWhere('r.datestamp >= :from')
+                ->setParameter('from', $from->format('Y-m-d H:i:s'));
+        }
+
+        if ($until !== null) {
+            $queryBuilder
+                ->andWhere('r.datestamp <= :until')
+                ->setParameter('until', $until->format('Y-m-d H:i:s'));
+        }
+
+        if ($setSpec !== null) {
+            $queryBuilder
+                ->andWhere('r.set_spec = :setSpec')
+                ->setParameter('setSpec', $setSpec);
+        }
+
+        $rows = $queryBuilder->fetchAllAssociative();
+
+        return array_map(
+            static fn (array $row): array => [
+                'oaiIdentifier' => (string) $row['oai_identifier'],
+                'datestamp' => new DateTimeImmutable((string) $row['datestamp'], new DateTimeZone('UTC')),
+                'setSpec' => (string) $row['set_spec'],
+            ],
+            $rows,
+        );
     }
 
     public function countForHarvest(?DateTimeImmutable $from, ?DateTimeImmutable $until, ?string $setSpec): int
