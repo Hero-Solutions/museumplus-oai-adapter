@@ -19,6 +19,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 #[AsCommand(
@@ -30,6 +31,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
     private const IMPORT_TABLE = 'records_import';
     private const LIVE_TABLE = 'records';
     private const OLD_TABLE = 'records_old';
+    private const MAX_FETCH_RETRIES = 3;
 
     public function __construct(
         private readonly HttpClientInterface $httpClient,
@@ -45,7 +47,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
     {
         $this
             ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'MuseumPlus fetch size.', '1000')
-            ->addOption('start-offset', null, InputOption::VALUE_REQUIRED, 'MuseumPlus offset to start from.', '0')
+            ->addOption('start-offset', null, InputOption::VALUE_REQUIRED, 'MuseumPlus offset to start from. A nonzero offset upserts directly into records; it does not resume a full import.', '0')
             ->addOption('max-records', null, InputOption::VALUE_REQUIRED, 'Fetch at most this many records and upsert them directly into records.')
             ->addOption('allow-empty-swap', null, InputOption::VALUE_NONE, 'Allow swapping an empty import table.');
     }
@@ -94,6 +96,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
                 limit: $limit,
                 offset: $offset,
                 timeout: $timeout,
+                io: $io,
             );
 
             $records = $this->parser->parse($xml);
@@ -248,19 +251,49 @@ final class ImportMuseumPlusRecordsCommand extends Command
         int $limit,
         int $offset,
         int $timeout,
+        SymfonyStyle $io,
     ): string {
-        $response = $this->httpClient->request('POST', $url, [
-            'auth_basic' => [$username, $password],
-            'headers' => [
-                'Accept' => 'application/octet-stream',
-                'Content-Type' => 'application/xml',
-            ],
-            'body' => $this->searchXml($searchFieldPath, $searchOperand, $limit, $offset),
-            'timeout' => $timeout,
-        ]);
+        for ($attempt = 1; ; ++$attempt) {
+            $response = null;
 
-        $statusCode = $response->getStatusCode();
-        $content = $response->getContent(false);
+            try {
+                $response = $this->httpClient->request('POST', $url, [
+                    'auth_basic' => [$username, $password],
+                    'headers' => [
+                        'Accept' => 'application/octet-stream',
+                        'Content-Type' => 'application/xml',
+                    ],
+                    'body' => $this->searchXml($searchFieldPath, $searchOperand, $limit, $offset),
+                    'timeout' => $timeout,
+                ]);
+
+                $statusCode = $response->getStatusCode();
+                // Responses are lazy: a transport failure can occur while reading the body.
+                $content = $response->getContent(false);
+
+                break;
+            } catch (TransportExceptionInterface $exception) {
+                $response?->cancel();
+
+                if ($attempt > self::MAX_FETCH_RETRIES) {
+                    throw new RuntimeException(sprintf(
+                        'MuseumPlus transport failed at offset %d after %d attempts. No records from this batch were stored.',
+                        $offset,
+                        $attempt,
+                    ), 0, $exception);
+                }
+
+                $delay = 2 ** ($attempt - 1);
+                $io->warning(sprintf(
+                    'MuseumPlus transport failed at offset %d. Retrying the same batch in %d seconds (%d/%d).',
+                    $offset,
+                    $delay,
+                    $attempt,
+                    self::MAX_FETCH_RETRIES,
+                ));
+                sleep($delay);
+            }
+        }
 
         if ($statusCode >= 400) {
             throw new RuntimeException(sprintf('MuseumPlus returned HTTP %d at offset %d.', $statusCode, $offset));
