@@ -58,9 +58,16 @@ begint vanaf nul. Zonder die optie worden bestaande tijdelijke gegevens zonder
 hervatpunt nooit stilzwijgend gewist.
 
 De standaardbatch is 1000. `--batch-size` mag ook tijdens hervatten veranderen.
-Transportfouten en HTTP 500/502/503/504 krijgen drie herpogingen. Bij langdurige
-uitval stopt het commando met een fout; na herstel start je het opnieuw met
+Transportfouten, HTTP 500/502/503/504 en lege, ongeldige of afgebroken XML-responses
+krijgen samen maximaal drie herpogingen per batch. De volledige XML wordt eerst
+gecontroleerd: ook complete records uit een afgebroken response worden niet opgeslagen.
+Bij langdurige uitval stopt het commando met een fout; na herstel start je het opnieuw met
 `--resume`. Er draait geen achtergrondproces dat op herstel blijft wachten.
+
+Bijvoorbeeld: na `Stored 1000 records` voor offset 393000 en een XML-fout op
+offset 394000 bewaart de import 394000 als hervatpunt. Start opnieuw met alleen
+`--resume`. Laat de eenmalige oude `--start-offset=309000` weg: die is niet meer
+gelijk aan het opgeslagen hervatpunt.
 
 `--max-records` en een losse `--start-offset` behouden hun eerdere betekenis:
 rechtstreeks bijwerken in `records`, zonder de volledige import te hervatten.

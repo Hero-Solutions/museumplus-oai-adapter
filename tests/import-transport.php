@@ -6,6 +6,9 @@ declare(strict_types=1);
 // No application bootstrap, environment configuration, real HTTP client or database.
 
 use App\Command\ImportMuseumPlusRecordsCommand;
+use App\Mapping\InvalidMuseumPlusResponse;
+use App\Mapping\MuseumPlusExportParser;
+use App\Mapping\XmlValueExtractor;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Style\SymfonyStyle;
@@ -32,6 +35,7 @@ function interruptedBody(): MockResponse
 }
 
 $xml = '<ObjectList><Object><ID>123</ID></Object></ObjectList>';
+$truncatedXml = '<ObjectList><Object><ID>discarded</ID></Object><Object><ID>123</ID><Tentoonstelling>';
 $cases = [
     'successful response' => [[new MockResponse($xml)], null],
     'interrupted body is fetched again in full' => [[interruptedBody(), new MockResponse($xml)], null],
@@ -54,7 +58,11 @@ $cases = [
     'HTTP error is not retried' => [[new MockResponse('Unauthorized', ['http_code' => 401])], 'HTTP 401'],
     'forbidden response is not retried' => [[new MockResponse('Forbidden', ['http_code' => 403])], 'HTTP 403'],
     'missing export is not retried' => [[new MockResponse('Not found', ['http_code' => 404])], 'HTTP 404'],
-    'empty response is rejected' => [[new MockResponse('   ')], 'empty response'],
+    'empty response recovers' => [[new MockResponse('   '), new MockResponse($xml)], null],
+    'truncated XML with HTTP 200 is fetched again in full' => [[new MockResponse($truncatedXml), new MockResponse($xml)], null],
+    'HTTP 502 followed by truncated XML recovers' => [[new MockResponse('Bad gateway', ['http_code' => 502]), new MockResponse($truncatedXml), new MockResponse($xml)], null],
+    'persistent invalid XML stops after four attempts' => [[new MockResponse($truncatedXml), new MockResponse($truncatedXml), new MockResponse($truncatedXml), new MockResponse($truncatedXml)], 'after 4 attempts'],
+    'transport, HTTP and XML failures share one retry budget' => [[interruptedBody(), new MockResponse('Bad gateway', ['http_code' => 502]), new MockResponse($truncatedXml), new MockResponse('   ')], 'after 4 attempts'],
 ];
 
 foreach ([500, 502, 503, 504] as $statusCode) {
@@ -76,16 +84,17 @@ foreach ($cases as $name => [$responses, $expectedError]) {
         return $response;
     });
 
-    // Exercise only fetching; the command cannot read configuration or use a database.
+    // Exercise fetching and parsing; the command cannot read configuration or use a database.
     $reflection = new ReflectionClass(ImportMuseumPlusRecordsCommand::class);
     $command = $reflection->newInstanceWithoutConstructor();
     $reflection->getProperty('httpClient')->setValue($command, $client);
+    $reflection->getProperty('parser')->setValue($command, new MuseumPlusExportParser(new XmlValueExtractor()));
     $output = new BufferedOutput();
     $io = new SymfonyStyle(new ArrayInput([]), $output);
     $error = null;
 
     try {
-        $content = $reflection->getMethod('fetchBatch')->invoke(
+        $records = $reflection->getMethod('fetchBatch')->invoke(
             $command,
             'https://museumplus.invalid/export',
             'fake-user',
@@ -103,14 +112,16 @@ foreach ($cases as $name => [$responses, $expectedError]) {
 
     if ($expectedError === null) {
         check($error === null, $name.': unexpected failure: '.($error?->getMessage() ?? ''));
-        check($content === $xml, $name.': incomplete or duplicated response body.');
+        check(count($records) === 1 && $records[0]->museumplusId === '123', $name.': incomplete or duplicated records.');
+        check($records[0]->museumplusXml === '<Object><ID>123</ID></Object>', $name.': incomplete or changed record XML.');
     } else {
         check($error !== null && str_contains($error->getMessage(), $expectedError), $name.': missing expected failure.');
         check(str_contains($error->getMessage(), '309000'), $name.': missing failed offset.');
     }
 
     if ($expectedError === 'after 4 attempts') {
-        check($error->getPrevious() instanceof TransportExceptionInterface, 'Original transport error must be preserved.');
+        $previous = $error->getPrevious();
+        check($previous instanceof TransportExceptionInterface || $previous instanceof InvalidMuseumPlusResponse, 'Original fetch or parsing error must be preserved.');
     }
 
     check(count($requests) === count($responses), $name.': wrong number of attempts.');
@@ -122,7 +133,7 @@ foreach ($cases as $name => [$responses, $expectedError]) {
         check(($options['verify_peer'] ?? true) && ($options['verify_host'] ?? true), 'TLS verification must stay enabled.');
     }
 
-    $display = $output->fetch();
+    $display = preg_replace('/\s+/', ' ', $output->fetch());
     check(substr_count($display, 'Retrying the same batch') === count($requests) - 1, $name.': missing retry notice.');
     fwrite(STDOUT, 'PASS: '.$name.PHP_EOL);
 }

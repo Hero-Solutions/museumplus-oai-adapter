@@ -156,6 +156,25 @@ runImport($db, noFetch(...), ['--resume' => true], 'does not match');
 fwrite(STDOUT, "PASS: changed filter, wrong offset, error pages, broken XML and mismatched staging are rejected\n");
 
 $db = interruptedImport();
+$db->tables['museumplus_import_state'][1]['next_offset'] = 394000;
+$db->tables['museumplus_import_state'][1]['skipped'] = 393998;
+$saved = $db->tables;
+$truncatedXml = '<ObjectList><Object><ID>discarded</ID></Object><Object><ID>3</ID><Tentoonstelling>';
+$requests = runImport($db, static fn (): MockResponse => new MockResponse($truncatedXml), ['--resume' => true], 'after 4 attempts');
+check($requests === array_fill(0, 4, [394000, 1000]) && $db->tables === $saved, 'Repeated truncated XML changed the checkpoint or stored partial records.');
+check(!$db->locked && $db->renames === 0, 'Truncated XML left a lock or published incomplete data.');
+$attempt = 0;
+$requests = runImport($db, static function () use ($db, $saved, $truncatedXml, &$attempt): MockResponse {
+    check($db->tables === $saved, 'A partial XML document was stored before the retry completed.');
+
+    return ++$attempt === 1 ? new MockResponse($truncatedXml) : batch(['3']);
+}, ['--resume' => true]);
+check($requests === [[394000, 1000], [394000, 1000]], 'Resume refetched earlier batches or skipped the failed offset.');
+check(array_keys($db->tables['records']) === ['test:1', 'test:2', 'test:3'], 'Recovered batch contains discarded partial records.');
+check($db->tables['museumplus_import_state'][1]['next_offset'] === 394001 && $db->renames === 1, 'Recovered batch advanced or published incorrectly.');
+fwrite(STDOUT, "PASS: truncated XML at offset 394000 retries, preserves progress and resumes without partial records\n");
+
+$db = interruptedImport();
 $db->tables['museumplus_import_state'] = [];
 $saved = $db->tables;
 runImport($db, noFetch(...), [], 'already contains data');

@@ -7,6 +7,7 @@ namespace App\Command;
 use App\Axiell\AxiellRecordMapper;
 use App\Axiell\AxiellXmlRenderer;
 use App\Import\MuseumPlusImportState;
+use App\Mapping\InvalidMuseumPlusResponse;
 use App\Mapping\MuseumPlusExportParser;
 use App\Mapping\MuseumPlusParsedRecord;
 use App\Mapping\RecordValues;
@@ -127,7 +128,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
             $limit = $maxRecords === null ? $batchSize : min($batchSize, $maxRecords - $fetched);
             $io->writeln(sprintf('Fetching offset %d, limit %d.', $offset, $limit));
 
-            $xml = $this->fetchBatch(
+            $records = $this->fetchBatch(
                 url: $url,
                 username: $username,
                 password: $password,
@@ -139,7 +140,6 @@ final class ImportMuseumPlusRecordsCommand extends Command
                 io: $io,
             );
 
-            $records = $this->parser->parse($xml);
             $count = count($records);
 
             if ($count > $limit) {
@@ -281,6 +281,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $this->connection->executeStatement($sql, array_values($data));
     }
 
+    /** @return list<MuseumPlusParsedRecord> */
     private function fetchBatch(
         string $url,
         string $username,
@@ -291,7 +292,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         int $offset,
         int $timeout,
         SymfonyStyle $io,
-    ): string {
+    ): array {
         for ($attempt = 1; ; ++$attempt) {
             $response = null;
             $exception = null;
@@ -321,14 +322,19 @@ final class ImportMuseumPlusRecordsCommand extends Command
                     $content = $response->getContent(false);
 
                     if (trim($content) === '') {
-                        throw new RuntimeException(sprintf('MuseumPlus returned an empty response at offset %d.', $offset));
+                        throw new InvalidMuseumPlusResponse('MuseumPlus returned an empty response.');
                     }
 
-                    return $content;
+                    // HTTP 200 can still contain truncated XML. Validate the entire
+                    // batch before returning any records or advancing the checkpoint.
+                    return $this->parser->parse($content);
                 }
             } catch (TransportExceptionInterface $exception) {
                 $response?->cancel();
                 $failure = sprintf('MuseumPlus transport failed at offset %d', $offset);
+            } catch (InvalidMuseumPlusResponse $exception) {
+                $response?->cancel();
+                $failure = sprintf('MuseumPlus returned an invalid response at offset %d: %s', $offset, $exception->getMessage());
             }
 
             if ($attempt > self::MAX_FETCH_RETRIES) {
