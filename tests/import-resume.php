@@ -160,19 +160,18 @@ $db->tables['museumplus_import_state'][1]['next_offset'] = 394000;
 $db->tables['museumplus_import_state'][1]['skipped'] = 393998;
 $saved = $db->tables;
 $truncatedXml = '<ObjectList><Object><ID>discarded</ID></Object><Object><ID>3</ID><Tentoonstelling>';
-$requests = runImport($db, static fn (): MockResponse => new MockResponse($truncatedXml), ['--resume' => true], 'after 4 attempts');
-check($requests === array_fill(0, 4, [394000, 1000]) && $db->tables === $saved, 'Repeated truncated XML changed the checkpoint or stored partial records.');
+$requests = runImport($db, static fn (): MockResponse => new MockResponse($truncatedXml), ['--resume' => true], 'Could not parse');
+check($requests === [[394000, 1000]] && $db->tables === $saved, 'Unidentifiable truncated XML was retried, changed the checkpoint or stored partial records.');
 check(!$db->locked && $db->renames === 0, 'Truncated XML left a lock or published incomplete data.');
-$attempt = 0;
-$requests = runImport($db, static function () use ($db, $saved, $truncatedXml, &$attempt): MockResponse {
-    check($db->tables === $saved, 'A partial XML document was stored before the retry completed.');
+$requests = runImport($db, static function () use ($db, $saved): MockResponse {
+    check($db->tables === $saved, 'A partial XML document was stored before resuming.');
 
-    return ++$attempt === 1 ? new MockResponse($truncatedXml) : batch(['3']);
+    return batch(['3']);
 }, ['--resume' => true]);
-check($requests === [[394000, 1000], [394000, 1000]], 'Resume refetched earlier batches or skipped the failed offset.');
+check($requests === [[394000, 1000]], 'Resume refetched earlier batches or skipped the failed offset.');
 check(array_keys($db->tables['records']) === ['test:1', 'test:2', 'test:3'], 'Recovered batch contains discarded partial records.');
 check($db->tables['museumplus_import_state'][1]['next_offset'] === 394001 && $db->renames === 1, 'Recovered batch advanced or published incorrectly.');
-fwrite(STDOUT, "PASS: truncated XML at offset 394000 retries, preserves progress and resumes without partial records\n");
+fwrite(STDOUT, "PASS: unidentifiable truncated XML stops immediately and resumes without partial records\n");
 
 $db = interruptedImport();
 $db->tables['museumplus_import_state'] = [];
@@ -273,8 +272,8 @@ fwrite(STDOUT, "PASS: wrong offset, invalid options, missing checkpoint and fail
 
 $db = database();
 runImport($db, static fn (): MockResponse => new MockResponse('Unauthorized', ['http_code' => 401]), [], 'HTTP 401');
-$requests = runImport($db, static fn (): MockResponse => batch(['first-valid']), ['--resume' => true, '--skip-offset' => '0']);
-check($requests === [[1, 1000]] && $db->tables['museumplus_import_state'][1]['skipped'] === 1, 'Offset zero could not be skipped explicitly.');
+$requests = runImport($db, static fn (int $offset): MockResponse => $offset === 1 ? batch(['first-valid']) : batch([]), ['--resume' => true, '--skip-offset' => '0']);
+check($requests === [[1, 1], [2, 2]] && $db->tables['museumplus_import_state'][1]['skipped'] === 1, 'Explicit skip must probe the next position before growing again.');
 fwrite(STDOUT, "PASS: the very first offset can also be skipped explicitly\n");
 
 function brokenObject(int $id): string
@@ -282,14 +281,14 @@ function brokenObject(int $id): string
     return '<ObjectList><Object><ID>'.$id.'</ID><Tentoonstelling>unfinished';
 }
 
-/** Simulate an export that truncates exactly when it reaches one broken object. */
-function damagedExport(int $end, int $brokenOffset): Closure
+/** Simulate an export that truncates when it reaches a run of broken objects. */
+function damagedExport(int $end, int $brokenOffset, int $brokenCount = 1): Closure
 {
-    return static function (int $offset, int $limit) use ($end, $brokenOffset): MockResponse {
+    return static function (int $offset, int $limit) use ($end, $brokenOffset, $brokenCount): MockResponse {
         $xml = '<ObjectList>';
         for ($position = $offset; $position < min($end, $offset + $limit); ++$position) {
             $xml .= '<Object><ID>'.($position + 1).'</ID>';
-            if ($position === $brokenOffset) {
+            if ($position >= $brokenOffset && $position < $brokenOffset + $brokenCount) {
                 return new MockResponse($xml.'<Tentoonstelling>unfinished');
             }
             $xml .= '</Object>';
@@ -304,15 +303,15 @@ $db->tables['museumplus_import_state'][1]['next_offset'] = 394800;
 $requests = runImport($db, damagedExport(394812, 394807), ['--resume' => true, '--batch-size' => '8']);
 check($requests === [
     [394800, 8], [394800, 4], [394804, 4], [394804, 2], [394806, 2], [394806, 1],
-    [394807, 1], [394807, 1], [394807, 1], [394807, 1], [394808, 8],
-], 'Isolation did not halve at the same offset, retry the singleton or restore the batch size.');
+    [394807, 1], [394808, 1], [394809, 2], [394811, 4],
+], 'Isolation did not halve at the same offset, probe the next object or gradually grow the batch size.');
 check(count($db->tables['records']) === 13 && !isset($db->tables['records']['test:394808']), 'Isolation lost valid records or imported the broken object.');
 check(isset($db->tables['records']['test:1'], $db->tables['records']['test:394812']), 'Earlier staging data or the final object was lost.');
 $state = $db->tables['museumplus_import_state'][1];
 check($state['next_offset'] === 394812 && $state['skipped'] === 1 && $state['status'] === 'completed', 'Automatic skip checkpoint/count was incorrect.');
 $log = $db->tables['museumplus_import_errors'][1];
 check($log['source_offset'] === 394807 && $log['museumplus_id'] === '394808' && $log['response_body'] === brokenObject(394808), 'Error log lost the exact offset, ID or raw bytes.');
-check($log['source_hash'] === $state['source_hash'] && $log['import_datestamp'] === $state['datestamp'] && str_contains($log['error_message'], 'after 4 attempts'), 'Error log lacks import context or the error.');
+check($log['source_hash'] === $state['source_hash'] && $log['import_datestamp'] === $state['datestamp'] && str_contains($log['error_message'], 'Could not parse MuseumPlus response'), 'Error log lacks import context or the error.');
 runImport($db, static fn (): MockResponse => batch(['99']), ['--restart' => true]);
 check($db->tables['museumplus_import_errors'][1] === $log, 'Publishing or restarting erased the error evidence.');
 fwrite(STDOUT, "PASS: halving isolates one object, logs it, preserves all other records and restores batch size\n");
@@ -328,13 +327,16 @@ $requests = runImport($db, static function (int $offset, int $limit) use (&$atte
 }, ['--batch-size' => '5']);
 check($requests === [[0, 5], [0, 2], [2, 2], [4, 1], [5, 5]], 'Odd-sized recovery interval skipped a position or failed to restore the original size.');
 check(count($db->tables['records']) === 6 && $db->tables['museumplus_import_errors'] === [], 'Transient batch truncation skipped or logged a healthy record.');
+fwrite(STDOUT, "PASS: valid smaller batches recover without skipping, including odd batch sizes\n");
 $db = database();
-$attempt = 0;
-runImport($db, static function (int $offset) use (&$attempt): MockResponse {
-    return ++$attempt === 1 ? new MockResponse(brokenObject(1)) : ($offset === 0 ? batch(['1']) : batch([]));
+$requests = runImport($db, static fn (int $offset): MockResponse => match ($offset) {
+    0 => new MockResponse(brokenObject(1)),
+    1 => batch(['2']),
+    default => batch([]),
 }, ['--batch-size' => '1']);
-check(isset($db->tables['records']['test:1']) && $db->tables['museumplus_import_errors'] === [], 'Transient singleton truncation was skipped.');
-fwrite(STDOUT, "PASS: transient invalid XML recovers without skipping, including odd batch sizes\n");
+check($requests === [[0, 1], [1, 1], [2, 1]], 'Invalid singleton was retried instead of skipped immediately.');
+check(array_keys($db->tables['records']) === ['test:2'] && $db->tables['museumplus_import_errors'][1]['response_body'] === brokenObject(1), 'Immediate skip failed to log the object or import its successor.');
+fwrite(STDOUT, "PASS: the first invalid singleton response is logged and skipped without retries\n");
 
 foreach (['failErrorLog' => 'error log failure', 'failCheckpoint' => 'checkpoint failure'] as $flag => $message) {
     $db = interruptedImport();
@@ -348,52 +350,84 @@ fwrite(STDOUT, "PASS: error evidence and automatic skip checkpoint commit atomic
 $db = interruptedImport();
 runImport($db, static fn (int $offset): MockResponse => $offset === 2 ? new MockResponse(brokenObject(3)) : new MockResponse('Unauthorized', ['http_code' => 401]), ['--resume' => true, '--batch-size' => '1'], 'HTTP 401');
 check($db->tables['museumplus_import_state'][1]['next_offset'] === 3 && count($db->tables['museumplus_import_errors']) === 1, 'Automatic skip was lost after a later failure.');
-$requests = runImport($db, static fn (): MockResponse => batch(['4']), ['--resume' => true]);
-check($requests === [[3, 1000]] && count($db->tables['museumplus_import_errors']) === 1, 'Resume revisited or double-logged the skipped object.');
+$requests = runImport($db, damagedExport(4, -1), ['--resume' => true]);
+check($requests === [[3, 1], [4, 2]] && count($db->tables['museumplus_import_errors']) === 1, 'Resume did not probe the next position or double-logged the skipped object.');
 fwrite(STDOUT, "PASS: automatic skip survives interruption and resume never replays it\n");
 
-foreach (['changing XML', 'HTTP then XML', 'transport then XML', 'HTML', 'empty', 'multiple objects'] as $failure) {
+foreach (['HTML', 'empty', 'multiple objects'] as $failure) {
     $db = interruptedImport();
     $saved = $db->tables;
-    $attempt = 0;
-    $requests = runImport($db, static function () use ($failure, &$attempt): MockResponse {
-        ++$attempt;
-        if ($attempt === 1 && $failure === 'transport then XML') {
-            throw new Symfony\Component\HttpClient\Exception\TransportException('Simulated interruption');
-        }
-
+    $requests = runImport($db, static function () use ($failure): MockResponse {
         return match ($failure) {
-            'changing XML' => new MockResponse(brokenObject(3).$attempt),
-            'HTTP then XML' => $attempt === 1 ? new MockResponse('Unavailable', ['http_code' => 503]) : new MockResponse(brokenObject(3)),
             'HTML' => new MockResponse('<html><body>Service unavailable</body></html>'),
             'empty' => new MockResponse(''),
             'multiple objects' => new MockResponse('<ObjectList><Object><ID>3</ID></Object><Object><ID>4</ID><Broken>'),
-            default => new MockResponse(brokenObject(3)),
         };
-    }, ['--resume' => true, '--batch-size' => '1'], 'after 4 attempts');
-    check($db->tables === $saved && $requests === array_fill(0, 4, [2, 1]), $failure.': uncertain failure skipped a record.');
+    }, ['--resume' => true, '--batch-size' => '1'], 'invalid response at offset 2');
+    check($db->tables === $saved && $requests === [[2, 1]], $failure.': uncertain failure skipped a record or retried.');
 }
-fwrite(STDOUT, "PASS: changing/mixed failures, error pages, empty responses and ignored limits never auto-skip\n");
+fwrite(STDOUT, "PASS: error pages, empty responses and ignored limits stop immediately without skipping\n");
+
+foreach (['HTTP', 'transport'] as $failure) {
+    $db = interruptedImport();
+    $attempt = 0;
+    $requests = runImport($db, static function (int $offset) use ($failure, &$attempt): MockResponse {
+        if (++$attempt === 1) {
+            if ($failure === 'transport') {
+                throw new Symfony\Component\HttpClient\Exception\TransportException('Simulated interruption');
+            }
+
+            return new MockResponse('Unavailable', ['http_code' => 503]);
+        }
+
+        return match ($offset) {
+            2 => new MockResponse(brokenObject(3)),
+            3 => batch(['4']),
+            default => batch([]),
+        };
+    }, ['--resume' => true, '--batch-size' => '1']);
+    check($requests === [[2, 1], [2, 1], [3, 1], [4, 1]], 'Retry must apply to '.$failure.' failures only, not the following XML error.');
+    check(array_keys($db->tables['records']) === ['test:1', 'test:2', 'test:4'] && count($db->tables['museumplus_import_errors']) === 1, 'Mixed failure skipped the wrong record or lost its log.');
+}
+fwrite(STDOUT, "PASS: transport and HTTP retries remain, followed by an immediate skip on invalid XML\n");
 
 $db = interruptedImport();
-$requests = runImport($db, static fn (int $offset): MockResponse => new MockResponse(brokenObject($offset + 1)), ['--resume' => true, '--batch-size' => '1'], 'Already skipped 3 consecutive');
-check($db->tables['museumplus_import_state'][1]['next_offset'] === 5 && $db->tables['museumplus_import_state'][1]['consecutive_invalid'] === 3 && count($db->tables['museumplus_import_errors']) === 3, 'Consecutive invalid objects were not capped.');
-$saved = $db->tables;
-$requests = runImport($db, static fn (): MockResponse => new MockResponse(brokenObject(6)), ['--resume' => true, '--batch-size' => '1'], 'Already skipped 3 consecutive');
-check($db->tables === $saved && $requests === array_fill(0, 4, [5, 1]), 'Resuming bypassed the consecutive error limit.');
-runImport($db, static fn (int $offset): MockResponse => match ($offset) {
-    5 => batch(['6']),
-    6 => new MockResponse(brokenObject(7)),
-    default => batch([]),
-}, ['--resume' => true, '--batch-size' => '1']);
-check($db->tables['museumplus_import_state'][1]['skipped'] === 4 && count($db->tables['museumplus_import_errors']) === 4, 'Healthy response did not reset the consecutive error limit.');
-fwrite(STDOUT, "PASS: consecutive skip limit persists across resume and resets after a valid response\n");
+$requests = runImport($db, damagedExport(30, 2, 8), ['--resume' => true, '--batch-size' => '8']);
+check($requests === [
+    [2, 8], [2, 4], [2, 2], [2, 1], [3, 1], [4, 1], [5, 1], [6, 1], [7, 1], [8, 1], [9, 1],
+    [10, 1], [11, 2], [13, 4], [17, 8], [25, 8],
+], 'Consecutive errors repeated the halving sequence or recovery did not grow up to the configured size.');
+check(array_column($db->tables['museumplus_import_errors'], 'source_offset') === range(2, 9), 'Every broken position must be logged exactly once.');
+check(count($db->tables['records']) === 22 && $db->tables['museumplus_import_state'][1]['next_offset'] === 30 && $db->tables['museumplus_import_state'][1]['skipped'] === 8, 'Consecutive skips lost good records or advanced incorrectly.');
+fwrite(STDOUT, "PASS: long runs of invalid objects use one request each, then recover with growing batches\n");
+
+$db = interruptedImport();
+$requests = runImport($db, static fn (int $offset, int $limit): MockResponse => $offset === 6
+    ? new MockResponse('Unauthorized', ['http_code' => 401])
+    : damagedExport(30, 2, 8)($offset, $limit), ['--resume' => true, '--batch-size' => '8'], 'HTTP 401');
+check($db->tables['museumplus_import_state'][1]['next_offset'] === 6 && $db->tables['museumplus_import_state'][1]['consecutive_invalid'] === 4, 'Interrupted streak lost its checkpoint.');
+$requests = runImport($db, damagedExport(30, 2, 8), ['--resume' => true]);
+check($requests === [[6, 1], [7, 1], [8, 1], [9, 1], [10, 1], [11, 2], [13, 4], [17, 8], [25, 16]], 'Resuming a broken streak restarted at the full batch size.');
+check(array_column($db->tables['museumplus_import_errors'], 'source_offset') === range(2, 9) && $db->tables['museumplus_import_state'][1]['consecutive_invalid'] === 0, 'Resume duplicated error logs or did not reset the streak on valid data.');
+fwrite(STDOUT, "PASS: resume remembers consecutive invalid objects and continues with single-record requests\n");
+
+$db = database();
+$requests = runImport($db, damagedExport(16, 0), ['--batch-size' => '5']);
+check($requests === [[0, 5], [0, 2], [0, 1], [1, 1], [2, 2], [4, 4], [8, 5], [13, 5]], 'Recovery growth exceeded an odd configured batch size or skipped positions.');
+check(count($db->tables['records']) === 15, 'Recovery to an odd batch size lost records.');
+fwrite(STDOUT, "PASS: gradual recovery is capped at the configured batch size, including odd sizes\n");
+
+$db = database();
+$requests = runImport($db, damagedExport(12, 0, 2), ['--batch-size' => '8', '--max-records' => '9']);
+check($requests === [[0, 8], [0, 4], [0, 2], [0, 1], [1, 1], [2, 1], [3, 2], [5, 4]], 'Recovery fetched beyond max-records or repeatedly halved through a broken streak.');
+check(count($db->tables['records']) === 8 && count($db->tables['museumplus_import_errors']) === 2, 'Partial recovery did not store seven valid positions and retain the existing record.');
+fwrite(STDOUT, "PASS: gradual recovery respects max-records after consecutive skips\n");
 
 $db = interruptedImport();
 $savedState = $db->tables['museumplus_import_state'];
 $savedStaging = $db->tables['records_import'];
 $requests = runImport($db, damagedExport(20, 11), ['--start-offset' => '10', '--max-records' => '3', '--batch-size' => '8']);
-check($requests === [[10, 3], [10, 1], [11, 1], [11, 1], [11, 1], [11, 1], [12, 1]], 'Partial import exceeded the source-position limit or skipped a valid record.');
+check($requests === [[10, 3], [10, 1], [11, 1], [12, 1]], 'Partial import exceeded the source-position limit, retried invalid XML or skipped a valid record.');
 check(array_keys($db->tables['records']) === ['test:old', 'test:11', 'test:13'] && count($db->tables['museumplus_import_errors']) === 1, 'Partial import skip/store/log was incorrect.');
 check($db->tables['museumplus_import_state'] === $savedState && $db->tables['records_import'] === $savedStaging, 'Partial isolation modified the full import.');
 fwrite(STDOUT, "PASS: partial imports obey max-records even with auto-skips and preserve full import progress\n");

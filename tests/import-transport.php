@@ -58,11 +58,10 @@ $cases = [
     'HTTP error is not retried' => [[new MockResponse('Unauthorized', ['http_code' => 401])], 'HTTP 401'],
     'forbidden response is not retried' => [[new MockResponse('Forbidden', ['http_code' => 403])], 'HTTP 403'],
     'missing export is not retried' => [[new MockResponse('Not found', ['http_code' => 404])], 'HTTP 404'],
-    'empty response recovers' => [[new MockResponse('   '), new MockResponse($xml)], null],
-    'truncated XML with HTTP 200 is fetched again in full' => [[new MockResponse($truncatedXml), new MockResponse($xml)], null],
-    'HTTP 502 followed by truncated XML recovers' => [[new MockResponse('Bad gateway', ['http_code' => 502]), new MockResponse($truncatedXml), new MockResponse($xml)], null],
-    'persistent invalid XML stops after four attempts' => [[new MockResponse($truncatedXml), new MockResponse($truncatedXml), new MockResponse($truncatedXml), new MockResponse($truncatedXml)], 'after 4 attempts'],
-    'transport, HTTP and XML failures share one retry budget' => [[interruptedBody(), new MockResponse('Bad gateway', ['http_code' => 502]), new MockResponse($truncatedXml), new MockResponse('   ')], 'after 4 attempts'],
+    'empty response stops without retrying' => [[new MockResponse('   ')], 'empty response'],
+    'truncated XML is surfaced immediately' => [[new MockResponse($truncatedXml)], 'Could not parse'],
+    'HTTP 502 is retried but subsequent invalid XML is not' => [[new MockResponse('Bad gateway', ['http_code' => 502]), new MockResponse($truncatedXml)], 'Could not parse'],
+    'transport and HTTP failures retry until an XML error is surfaced' => [[interruptedBody(), new MockResponse('Bad gateway', ['http_code' => 502]), new MockResponse($truncatedXml)], 'Could not parse'],
 ];
 
 foreach ([500, 502, 503, 504] as $statusCode) {
@@ -122,6 +121,11 @@ foreach ($cases as $name => [$responses, $expectedError]) {
     if ($expectedError === 'after 4 attempts') {
         $previous = $error->getPrevious();
         check($previous instanceof TransportExceptionInterface || $previous instanceof InvalidMuseumPlusResponse, 'Original fetch or parsing error must be preserved.');
+    }
+
+    if ($error instanceof InvalidMuseumPlusResponse) {
+        check($error->getPrevious() instanceof InvalidMuseumPlusResponse, 'Original parsing error must be preserved.');
+        check($error->responseBody === ($expectedError === 'empty response' ? '' : $truncatedXml), 'Invalid response bytes were lost.');
     }
 
     check(count($requests) === count($responses), $name.': wrong number of attempts.');

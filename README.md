@@ -61,9 +61,9 @@ begint vanaf nul. Zonder die optie worden bestaande tijdelijke gegevens zonder
 hervatpunt nooit stilzwijgend gewist.
 
 De standaardbatch is 1000. `--batch-size` mag ook tijdens hervatten veranderen.
-Transportfouten, HTTP 500/502/503/504 en lege of onherkenbare responses krijgen
-samen maximaal drie herpogingen per batch. Herkenbare objectexports met ongeldige
-XML worden automatisch verkleind, zoals hieronder beschreven. De volledige XML
+Transportfouten en HTTP 500/502/503/504 krijgen samen maximaal drie herpogingen
+per batch. Ongeldige XML wordt niet opnieuw geprobeerd. Herkenbare objectexports
+met ongeldige XML worden automatisch verkleind, zoals hieronder beschreven. De volledige XML
 wordt eerst gecontroleerd: ook complete records uit een afgebroken response
 worden niet rechtstreeks opgeslagen.
 Bij langdurige uitval stopt het commando met een fout; na herstel start je het opnieuw met
@@ -87,26 +87,30 @@ Dit werkt standaard, ook bij `--resume`:
    import de batchgrootte op dezelfde offset: bijvoorbeeld 1000 → 500 → 250 → … → 1.
 2. Geldige kleinere batches worden opgeslagen. Alleen de nog niet verwerkte
    posities worden verder onderzocht; er worden geen hele batches overgeslagen.
-3. Bij limit 1 volgen nog drie herpogingen. Alleen als alle vier antwoorden
-   byte voor byte dezelfde ongeldige XML bevatten, met één herkenbaar Object en
-   een numeriek ID, wordt die ene positie overgeslagen.
+3. Bij limit 1 wordt die ene positie meteen overgeslagen als het ongeldige
+   antwoord één herkenbaar Object met een numeriek ID bevat. Er zijn geen
+   herpogingen of wachttijden voor XML-fouten.
 4. Offset, MuseumPlus-ID, foutmelding, ruwe response en importcontext worden in
    `museumplus_import_errors` bewaard. Het foutenlog en het hervatpunt worden
    samen vastgelegd. Als het loggen faalt, schuift het hervatpunt niet op.
-5. Daarna gaat de import verder vanaf de volgende positie, met de ingestelde
-   batchgrootte. Ook na volledig herstel van een verkleind interval wordt die
-   batchgrootte hersteld.
+5. Na een overgeslagen object wordt meteen de volgende positie met limit 1
+   opgehaald. Ook als meerdere objecten achter elkaar fout zijn, blijft de import
+   per record verdergaan: elk fout object krijgt één aanvraag en een eigen logregel.
+6. Na iedere geldige batch verdubbelt de grootte: 1 → 2 → 4 → 8 → …, tot de
+   ingestelde batchgrootte. Bij een nieuwe XML-fout wordt weer gehalveerd. Als een
+   verkleind interval volledig geldig blijkt zonder skip, wordt de ingestelde
+   grootte direct hersteld.
 
-Transportfouten, HTTP-fouten, lege antwoorden, foutpagina's en wisselende
-ongeldige antwoorden worden nooit automatisch als een kapot object overgeslagen.
+Transportfouten, HTTP-fouten, lege antwoorden en foutpagina's worden nooit
+automatisch als een kapot object overgeslagen. Lege of onherkenbare antwoorden
+stoppen de import meteen.
 Een volgende run met `--resume` begint dan bij het bewaarde hervatpunt.
 
-Na drie opeenvolgende automatische overslagen stopt de import als ook het vierde
-object ongeldige XML blijft geven. Die teller blijft bewaard bij hervatten en
-wordt gereset zodra een geldig antwoord volgt, of bij een expliciete handmatige
-skip. Zo kan een aanhoudende algemene fout niet stilzwijgend duizenden objecten
-doen verdwijnen. Identieke ongeldige antwoorden zijn een praktische aanwijzing,
-geen sluitend bewijs dat de fout in het object zit.
+Opeenvolgende ongeldige objecten stoppen de import niet meer na drie skips.
+De bestaande teller `consecutive_invalid` wordt gebruikt om ook na een
+onderbreking midden in zo'n reeks met limit 1 te hervatten. Na een handmatige
+`--skip-offset` wordt eveneens eerst één volgend object getest. Hiervoor is geen
+extra migratie nodig bovenop `Version20260930140000`.
 
 Automatisch overgeslagen objecten ontbreken in de gepubliceerde volledige import.
 Het foutenlog blijft behouden na publiceren en na `--restart`. Een nieuwe import
@@ -194,5 +198,5 @@ php -n tests/dump-response.php
 Deze tests gebruiken uitsluitend een HTTP-mock, een database-mock in geheugen en
 fictieve instellingen. Ze starten geen Symfony-kernel en lezen geen `.env`.
 Ze controleren onder meer het halveren, behouden van geldige records, automatisch
-overslaan, atomair loggen, hervatten en het begrenzen van opeenvolgende fouten.
+overslaan, atomair loggen, hervatten en efficiënt ophalen bij opeenvolgende fouten.
 De migratie en de SQL-tabelwissel zijn niet op een echte databaseserver uitgevoerd.
