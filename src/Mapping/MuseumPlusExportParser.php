@@ -23,7 +23,7 @@ final class MuseumPlusExportParser
         $document = $this->loadDocument($xml);
 
         if ($document->documentElement?->localName !== 'ObjectList') {
-            throw new InvalidMuseumPlusResponse('Expected an ObjectList response from MuseumPlus. Refusing to treat an error page as the end of the import.');
+            throw new InvalidMuseumPlusResponse('Expected an ObjectList response from MuseumPlus. Refusing to treat an error page as the end of the import.', $xml);
         }
 
         $xpath = new DOMXPath($document);
@@ -135,7 +135,7 @@ final class MuseumPlusExportParser
         if (!$loaded) {
             $message = $errors === [] ? 'Could not parse XML' : trim($errors[0]->message);
 
-            throw new InvalidMuseumPlusResponse(sprintf('Could not parse MuseumPlus response: %s', $message));
+            throw new InvalidMuseumPlusResponse(sprintf('Could not parse MuseumPlus response: %s', $message), $xml);
         }
 
         return $document;

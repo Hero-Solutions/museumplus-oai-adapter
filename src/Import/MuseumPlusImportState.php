@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Import;
 
+use App\Mapping\InvalidMuseumPlusResponse;
 use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\ParameterType;
 use RuntimeException;
 
 final class MuseumPlusImportState
@@ -77,6 +79,7 @@ final class MuseumPlusImportState
             'stored' => $resume ? $stored : 0,
             'skipped' => $resume ? $startOffset - $stored : 0,
             'invalid_fragments' => 0,
+            'consecutive_invalid' => 0,
             'status' => 'fetching',
         ];
 
@@ -100,12 +103,13 @@ final class MuseumPlusImportState
      * @param array{stored: int, skipped: int, invalidFragments: int} $stats
      * @return array<string, int|string>
      */
-    public function advance(array $state, int $count, array $stats, bool $finished): array
+    public function advance(array $state, int $count, array $stats, bool $finished, bool $invalidRecord = false): array
     {
         $state['next_offset'] = (int) $state['next_offset'] + $count;
         $state['stored'] = (int) $state['stored'] + $stats['stored'];
         $state['skipped'] = (int) $state['skipped'] + $stats['skipped'];
         $state['invalid_fragments'] = (int) $state['invalid_fragments'] + $stats['invalidFragments'];
+        $state['consecutive_invalid'] = $invalidRecord ? (int) ($state['consecutive_invalid'] ?? 0) + 1 : 0;
         $state['status'] = $finished ? 'ready' : 'fetching';
         $this->connection->update(self::TABLE, $state, ['id' => 1]);
 
@@ -138,6 +142,20 @@ final class MuseumPlusImportState
             ['stored' => 0, 'skipped' => 1, 'invalidFragments' => 0],
             false,
         ));
+    }
+
+    /** Called inside the same transaction as the skip checkpoint. */
+    public function logInvalidRecord(string $sourceHash, string $datestamp, int $offset, InvalidMuseumPlusResponse $error): void
+    {
+        $this->connection->insert('museumplus_import_errors', [
+            'source_hash' => $sourceHash,
+            'import_datestamp' => $datestamp,
+            'source_offset' => $offset,
+            'museumplus_id' => $error->museumplusId(),
+            'error_message' => $error->getMessage(),
+            'response_body' => $error->responseBody,
+            'created_at' => (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s'),
+        ], ['response_body' => ParameterType::BINARY]);
     }
 
     public function publish(): void

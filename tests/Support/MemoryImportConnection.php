@@ -11,9 +11,10 @@ use RuntimeException;
 /** Strict in-memory database double. Any unhandled database call fails closed. */
 final class MemoryImportConnection extends Connection
 {
-    public array $tables = ['records' => [], 'records_import' => [], 'museumplus_import_state' => []];
+    public array $tables = ['records' => [], 'records_import' => [], 'museumplus_import_state' => [], 'museumplus_import_errors' => []];
     public bool $locked = false;
     public bool $failCheckpoint = false;
+    public bool $failErrorLog = false;
     public ?string $failInsertId = null;
     public ?string $failRename = null;
     public int $renames = 0;
@@ -97,6 +98,14 @@ final class MemoryImportConnection extends Connection
 
         if (isset($data['museumplus_id']) && $data['museumplus_id'] === $this->failInsertId) {
             throw new RuntimeException('Simulated record insert failure');
+        }
+
+        if ($table === 'museumplus_import_errors') {
+            if ($this->failErrorLog) {
+                throw new RuntimeException('Simulated error log failure');
+            }
+
+            $data['id'] = count($this->tables[$table]) + 1;
         }
 
         $key = $data['oai_identifier'] ?? $data['id'];

@@ -33,6 +33,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
     private const IMPORT_TABLE = 'records_import';
     private const LIVE_TABLE = 'records';
     private const MAX_FETCH_RETRIES = 3;
+    private const MAX_CONSECUTIVE_INVALID = 3;
 
     public function __construct(
         private readonly HttpClientInterface $httpClient,
@@ -111,14 +112,15 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $stored = 0;
         $skipped = 0;
         $invalidFragments = 0;
+        $consecutiveInvalid = 0;
+        $sourceHash = hash('sha256', json_encode([$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec], JSON_THROW_ON_ERROR));
 
         if (!$partialImport) {
-            $sourceHash = hash('sha256', json_encode([$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec], JSON_THROW_ON_ERROR));
             $state = $progress->prepare($sourceHash, $resume, $restart, $startOffset);
 
             if ($skipOffset !== null) {
                 $state = $progress->skipOffset($state, $skipOffset);
-                $io->warning(sprintf('Explicitly skipped offset %d. Saved next offset: %d. No other offsets will be skipped automatically.', $skipOffset, $state['next_offset']));
+                $io->warning(sprintf('Explicitly skipped offset %d. Saved next offset: %d.', $skipOffset, $state['next_offset']));
             }
 
             if ($state['status'] === 'completed') {
@@ -131,27 +133,61 @@ final class ImportMuseumPlusRecordsCommand extends Command
             $stored = (int) $state['stored'];
             $skipped = (int) $state['skipped'];
             $invalidFragments = (int) $state['invalid_fragments'];
+            $consecutiveInvalid = (int) ($state['consecutive_invalid'] ?? 0);
             $datestamp = new DateTimeImmutable($state['datestamp'], new DateTimeZone('UTC'));
             $io->note(sprintf('Full import checkpoint: offset %d, %d records already stored. Re-run with --resume after an interruption.', $offset, $stored));
         }
 
+        $currentBatchSize = $batchSize;
+        $recoveryEnd = null;
+
         while (($state === null || $state['status'] === 'fetching') && ($maxRecords === null || $fetched < $maxRecords)) {
-            $limit = $maxRecords === null ? $batchSize : min($batchSize, $maxRecords - $fetched);
+            $limit = $maxRecords === null ? $currentBatchSize : min($currentBatchSize, $maxRecords - $fetched);
+            if ($recoveryEnd !== null) {
+                $limit = min($limit, $recoveryEnd - $offset);
+            }
             $io->writeln(sprintf('Fetching offset %d, limit %d.', $offset, $limit));
 
-            $records = $this->fetchBatch(
-                url: $url,
-                username: $username,
-                password: $password,
-                searchFieldPath: $searchFieldPath,
-                searchOperand: $searchOperand,
-                limit: $limit,
-                offset: $offset,
-                timeout: $timeout,
-                io: $io,
-            );
+            $invalidRecord = null;
+            try {
+                $records = $this->fetchBatch(
+                    url: $url,
+                    username: $username,
+                    password: $password,
+                    searchFieldPath: $searchFieldPath,
+                    searchOperand: $searchOperand,
+                    limit: $limit,
+                    offset: $offset,
+                    timeout: $timeout,
+                    io: $io,
+                );
+            } catch (InvalidMuseumPlusResponse $error) {
+                if ($error->museumplusId() === null) {
+                    throw $error;
+                }
 
-            $count = count($records);
+                if ($limit > 1) {
+                    $recoveryEnd ??= $offset + $limit;
+                    $currentBatchSize = max(1, intdiv($limit, 2));
+                    $io->warning(sprintf('Invalid MuseumPlus XML at offset %d. Reducing batch size from %d to %d at the same offset.', $offset, $limit, $currentBatchSize));
+
+                    continue;
+                }
+
+                if (!$error->repeatable || preg_match_all('~<Object(?:\s[^>]*)?>~', $error->responseBody) !== 1) {
+                    throw $error;
+                }
+
+                if ($consecutiveInvalid >= self::MAX_CONSECUTIVE_INVALID) {
+                    throw new RuntimeException(sprintf('Already skipped %d consecutive invalid objects. Stopping at offset %d to avoid skipping records during a wider API failure. The checkpoint is preserved.', $consecutiveInvalid, $offset), 0, $error);
+                }
+
+                $records = [];
+                $invalidRecord = $error;
+            }
+
+            // A confirmed invalid singleton consumes one source position, never EOF.
+            $count = $invalidRecord === null ? count($records) : 1;
 
             if ($count > $limit) {
                 throw new RuntimeException('MuseumPlus returned more records than requested. Refusing to advance the checkpoint.');
@@ -161,7 +197,15 @@ final class ImportMuseumPlusRecordsCommand extends Command
                 break;
             }
 
-            [$stats, $state] = $this->connection->transactional(function () use ($records, $datestamp, $identifierPrefix, $defaultSetSpec, $partialImport, $progress, $state, $count, $limit): array {
+            [$stats, $state] = $this->connection->transactional(function () use ($records, $datestamp, $identifierPrefix, $defaultSetSpec, $partialImport, $progress, $state, $count, $limit, $invalidRecord, $sourceHash, $offset): array {
+                if ($invalidRecord !== null) {
+                    $progress->logInvalidRecord($sourceHash, $datestamp->format('Y-m-d H:i:s'), $offset, $invalidRecord);
+                    $stats = ['stored' => 0, 'skipped' => 1, 'invalidFragments' => 0];
+                    $nextState = $state === null ? null : $progress->advance($state, 1, $stats, false, true);
+
+                    return [$stats, $nextState];
+                }
+
                 $stats = $this->storeBatch(
                     records: $records,
                     datestamp: $datestamp,
@@ -179,13 +223,23 @@ final class ImportMuseumPlusRecordsCommand extends Command
             $skipped += $stats['skipped'];
             $invalidFragments += $stats['invalidFragments'];
 
-            $io->writeln(sprintf('Stored %d records from this batch.', $stats['stored']));
+            if ($invalidRecord !== null) {
+                ++$consecutiveInvalid;
+                $io->warning(sprintf('Skipped invalid object at offset %d (MuseumPlus ID %s) after repeated identical invalid XML responses. Error and raw response saved in museumplus_import_errors. Continuing at offset %d.', $offset, $invalidRecord->museumplusId(), $offset + 1));
+            } else {
+                $consecutiveInvalid = 0;
+                $io->writeln(sprintf('Stored %d records from this batch.', $stats['stored']));
+            }
 
             if ($count < $limit) {
                 break;
             }
 
             $offset += $limit;
+            if ($invalidRecord !== null || ($recoveryEnd !== null && $offset >= $recoveryEnd)) {
+                $currentBatchSize = $batchSize;
+                $recoveryEnd = null;
+            }
         }
 
         if ($stored === 0 && !$partialImport && !$allowEmptySwap) {
@@ -197,7 +251,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         }
 
         $io->success(sprintf(
-            'Processed %d source positions. Stored %d records%s. Skipped %d records (missing ID or explicitly skipped). Invalid fragments: %d.',
+            'Processed %d source positions. Stored %d records%s. Skipped %d records (missing ID, invalid XML or explicitly skipped). Invalid fragments: %d.',
             $fetched,
             $stored,
             $partialImport ? ' directly into records' : ' and published them to records',
@@ -304,6 +358,9 @@ final class ImportMuseumPlusRecordsCommand extends Command
         int $timeout,
         SymfonyStyle $io,
     ): array {
+        $firstInvalidHash = null;
+        $identicalInvalidResponses = true;
+
         for ($attempt = 1; ; ++$attempt) {
             $response = null;
             $exception = null;
@@ -322,6 +379,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
                 $statusCode = $response->getStatusCode();
 
                 if ($statusCode >= 400) {
+                    $identicalInvalidResponses = false;
                     $response->cancel();
                     $failure = sprintf('MuseumPlus returned HTTP %d at offset %d', $statusCode, $offset);
 
@@ -341,19 +399,32 @@ final class ImportMuseumPlusRecordsCommand extends Command
                     return $this->parser->parse($content);
                 }
             } catch (TransportExceptionInterface $exception) {
+                $identicalInvalidResponses = false;
                 $response?->cancel();
                 $failure = sprintf('MuseumPlus transport failed at offset %d', $offset);
             } catch (InvalidMuseumPlusResponse $exception) {
                 $response?->cancel();
                 $failure = sprintf('MuseumPlus returned an invalid response at offset %d: %s', $offset, $exception->getMessage());
+                $bodyHash = hash('sha256', $exception->responseBody);
+                $firstInvalidHash ??= $bodyHash;
+                $identicalInvalidResponses = $identicalInvalidResponses && $bodyHash === $firstInvalidHash;
+
+                if ($limit > 1 && $exception->museumplusId() !== null) {
+                    throw $exception;
+                }
             }
 
             if ($attempt > self::MAX_FETCH_RETRIES) {
-                throw new RuntimeException(sprintf(
+                $message = sprintf(
                     '%s after %d attempts. No records from this batch were stored.',
                     $failure,
                     $attempt,
-                ), 0, $exception);
+                );
+                if ($exception instanceof InvalidMuseumPlusResponse) {
+                    throw new InvalidMuseumPlusResponse($message, $exception->responseBody, $identicalInvalidResponses, $exception);
+                }
+
+                throw new RuntimeException($message, 0, $exception);
             }
 
             $delay = 2 ** ($attempt - 1);
