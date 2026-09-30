@@ -22,6 +22,11 @@ final class MuseumPlusExportParser
     public function parse(string $xml): array
     {
         $document = $this->loadDocument($xml);
+
+        if ($document->documentElement?->localName !== 'ObjectList') {
+            throw new RuntimeException('Expected an ObjectList response from MuseumPlus. Refusing to treat an error page as the end of the import.');
+        }
+
         $xpath = new DOMXPath($document);
         $records = [];
 
