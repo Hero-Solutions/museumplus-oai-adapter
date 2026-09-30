@@ -74,6 +74,26 @@ rechtstreeks bijwerken in `records`, zonder de volledige import te hervatten.
 Gebruik voor herstel dus altijd `--resume`. `--max-records` kan niet gecombineerd
 worden met `--resume` of `--restart`.
 
+## Het ruwe antwoord voor één object bekijken
+
+Voer dit na uitrol zelf uit vanuit de projectmap:
+
+```bash
+php bin/console app:dump-museumplus-response 394807 var/museumplus-394807.xml
+less -N var/museumplus-394807.xml
+```
+
+Dit doet één aanvraag met dezelfde export en filters als de import, met limit 1.
+394807 is een **offset**, geen object-ID. De response wordt ongewijzigd opgeslagen,
+ook bij ongeldige XML of een HTTP-fout. Er worden geen records of hervatpunten
+gewijzigd. Een bestaand bestand wordt niet overschreven; kies voor een nieuwe
+aanvraag een andere bestandsnaam.
+
+Ook bij een transportfout blijven de al ontvangen bytes bewaard. Het commando
+meldt dan een fout. Een bestand met afgebroken XML bevat alleen wat de API heeft
+teruggestuurd; ontbrekende inhoud wordt niet gereconstrueerd. In `less` springt
+`58g` naar regel 58. Bewaar zulke bestanden buiten de publieke webmap.
+
 ## Consistentie
 
 - De bestaande tabel `records` blijft beschikbaar tot de volledige import klaar is.
@@ -102,6 +122,7 @@ Een hervatpunt kan veranderingen in de externe export niet compenseren.
 ```bash
 php -n tests/import-transport.php
 php -n tests/import-resume.php
+php -n tests/dump-response.php
 ```
 
 Deze tests gebruiken uitsluitend een HTTP-mock, een database-mock in geheugen en
