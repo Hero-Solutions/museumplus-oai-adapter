@@ -51,6 +51,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
             ->addOption('start-offset', null, InputOption::VALUE_REQUIRED, 'Without --resume: upsert directly into records. With --resume: recover a legacy full import without a checkpoint at this failed fetch offset.', '0')
             ->addOption('max-records', null, InputOption::VALUE_REQUIRED, 'Fetch at most this many records and upsert them directly into records.')
             ->addOption('resume', null, InputOption::VALUE_NONE, 'Resume an existing full import; fail if none exists. Incomplete imports also resume automatically without this flag.')
+            ->addOption('skip-offset', null, InputOption::VALUE_REQUIRED, 'With --resume, explicitly skip exactly this saved next offset once, then continue with the following object.')
             ->addOption('restart', null, InputOption::VALUE_NONE, 'Discard the saved full import and explicitly start over from zero.')
             ->addOption('allow-empty-swap', null, InputOption::VALUE_NONE, 'Allow swapping an empty import table.');
     }
@@ -80,9 +81,14 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $allowEmptySwap = (bool) $input->getOption('allow-empty-swap');
         $resume = (bool) $input->getOption('resume');
         $restart = (bool) $input->getOption('restart');
+        $skipOffset = $input->getOption('skip-offset') === null ? null : $this->nonNegativeIntOption($input, 'skip-offset');
 
         if (($resume && $restart) || ($maxRecords !== null && ($resume || $restart)) || ($restart && $startOffset > 0)) {
             throw new RuntimeException('--resume and --restart cannot be combined with each other or --max-records; --restart also cannot use a nonzero --start-offset.');
+        }
+
+        if ($skipOffset !== null && (!$resume || $startOffset !== 0)) {
+            throw new RuntimeException('--skip-offset requires --resume and cannot be combined with a nonzero --start-offset.');
         }
 
         $partialImport = !$resume && ($startOffset > 0 || $maxRecords !== null);
@@ -109,6 +115,11 @@ final class ImportMuseumPlusRecordsCommand extends Command
         if (!$partialImport) {
             $sourceHash = hash('sha256', json_encode([$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec], JSON_THROW_ON_ERROR));
             $state = $progress->prepare($sourceHash, $resume, $restart, $startOffset);
+
+            if ($skipOffset !== null) {
+                $state = $progress->skipOffset($state, $skipOffset);
+                $io->warning(sprintf('Explicitly skipped offset %d. Saved next offset: %d. No other offsets will be skipped automatically.', $skipOffset, $state['next_offset']));
+            }
 
             if ($state['status'] === 'completed') {
                 $io->success('This import has already been published. No records were fetched or swapped.');
@@ -186,7 +197,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         }
 
         $io->success(sprintf(
-            'Fetched %d records. Stored %d records%s. Skipped %d records without MuseumPlus ID. Invalid fragments: %d.',
+            'Processed %d source positions. Stored %d records%s. Skipped %d records (missing ID or explicitly skipped). Invalid fragments: %d.',
             $fetched,
             $stored,
             $partialImport ? ' directly into records' : ' and published them to records',

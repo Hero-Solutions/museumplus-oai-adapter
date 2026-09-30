@@ -228,3 +228,51 @@ foreach ([['--resume' => true, '--max-records' => '1'], ['--resume' => true, '--
 $db->locked = true;
 runImport($db, noFetch(...), ['--resume' => true], 'already running');
 fwrite(STDOUT, "PASS: partial imports, incompatible options and concurrent import protection\n");
+
+$db = interruptedImport();
+$db->tables['museumplus_import_state'][1]['next_offset'] = 394807;
+$db->tables['museumplus_import_state'][1]['skipped'] = 394805;
+$requests = runImport($db, static fn (int $offset): MockResponse => $offset === 394808 ? batch(['next-object']) : batch([]), [
+    '--resume' => true, '--skip-offset' => '394807', '--batch-size' => '1',
+]);
+check($requests === [[394808, 1], [394809, 1]], 'Explicit skip did not fetch exactly the following source position.');
+check(array_keys($db->tables['records']) === ['test:1', 'test:2', 'test:next-object'], 'Skip lost previous records or the next object.');
+check($db->tables['museumplus_import_state'][1]['skipped'] === 394806, 'Exactly one skipped record must be counted.');
+runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '394807'], 'no longer fetching');
+fwrite(STDOUT, "PASS: explicit skip of 394807 preserves earlier records and imports 394808\n");
+
+$db = interruptedImport();
+$staging = $db->tables['records_import'];
+runImport($db, static fn (): MockResponse => new MockResponse('Unauthorized', ['http_code' => 401]), [
+    '--resume' => true, '--skip-offset' => '2', '--batch-size' => '1',
+], 'HTTP 401');
+check($db->tables['museumplus_import_state'][1]['next_offset'] === 3 && $db->tables['museumplus_import_state'][1]['skipped'] === 1, 'Skip was lost when the following request failed.');
+check($db->tables['records_import'] === $staging && array_keys($db->tables['records']) === ['test:old'], 'Skipping changed stored records.');
+$saved = $db->tables;
+runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '2'], 'Saved next offset is 3');
+check($db->tables === $saved, 'Reusing the skip command skipped another object.');
+check(runImport($db, static fn (): MockResponse => batch(['3']), ['--resume' => true]) === [[3, 1000]], 'Normal resume did not retain the deliberate skip.');
+fwrite(STDOUT, "PASS: skip persists across another failure and cannot accidentally be applied twice\n");
+
+$db = interruptedImport();
+$saved = $db->tables;
+runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '5'], 'Saved next offset is 2');
+foreach ([['--skip-offset' => '2'], ['--resume' => true, '--skip-offset' => '2', '--start-offset' => '2']] as $options) {
+    runImport($db, noFetch(...), $options, 'requires --resume');
+}
+runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '-1'], 'non-negative');
+check($db->tables === $saved, 'Rejected skip changed the checkpoint.');
+$db->failCheckpoint = true;
+runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '2'], 'checkpoint failure');
+check($db->tables === $saved && !$db->locked, 'A failed skip checkpoint was not rolled back.');
+$db->failCheckpoint = false;
+$db->tables['museumplus_import_state'][1]['status'] = 'ready';
+runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '2'], 'no longer fetching');
+runImport(database(), noFetch(...), ['--resume' => true, '--skip-offset' => '0'], 'No saved checkpoint');
+fwrite(STDOUT, "PASS: wrong offset, invalid options, missing checkpoint and failed checkpoint writes cannot skip records\n");
+
+$db = database();
+runImport($db, static fn (): MockResponse => new MockResponse('Unauthorized', ['http_code' => 401]), [], 'HTTP 401');
+$requests = runImport($db, static fn (): MockResponse => batch(['first-valid']), ['--resume' => true, '--skip-offset' => '0']);
+check($requests === [[1, 1000]] && $db->tables['museumplus_import_state'][1]['skipped'] === 1, 'Offset zero could not be skipped explicitly.');
+fwrite(STDOUT, "PASS: the very first offset can also be skipped explicitly\n");

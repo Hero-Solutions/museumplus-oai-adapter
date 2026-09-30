@@ -112,6 +112,34 @@ final class MuseumPlusImportState
         return $state;
     }
 
+    /**
+     * @param array<string, int|string> $state
+     * @return array<string, int|string>
+     */
+    public function skipOffset(array $state, int $offset): array
+    {
+        if ($state['status'] !== 'fetching') {
+            throw new RuntimeException('Cannot skip an offset: this import is no longer fetching records.');
+        }
+
+        if ($offset !== (int) $state['next_offset']) {
+            throw new RuntimeException(sprintf('Saved next offset is %d; refusing to skip offset %d. If it was already skipped, resume without --skip-offset.', $state['next_offset'], $offset));
+        }
+
+        if ($offset === PHP_INT_MAX) {
+            throw new RuntimeException('Cannot advance beyond the maximum supported offset.');
+        }
+
+        // Commit before the next request, so a later failure cannot undo this
+        // deliberate skip. Reusing the old --skip-offset then fails the equality check.
+        return $this->connection->transactional(fn (): array => $this->advance(
+            $state,
+            1,
+            ['stored' => 0, 'skipped' => 1, 'invalidFragments' => 0],
+            false,
+        ));
+    }
+
     public function publish(): void
     {
         // Publish the completion marker in the SAME rename as the records. A lost

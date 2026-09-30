@@ -74,6 +74,31 @@ rechtstreeks bijwerken in `records`, zonder de volledige import te hervatten.
 Gebruik voor herstel dus altijd `--resume`. `--max-records` kan niet gecombineerd
 worden met `--resume` of `--restart`.
 
+## Eén bevestigd problematisch object overslaan
+
+Als een aanvraag met limit 1 steeds faalt op dezelfde positie, kun je die positie
+expliciet overslaan. Voor de onderzochte offset 394807 (MuseumPlus-ID 20051081):
+
+```bash
+php bin/console app:import-museumplus-records --resume --skip-offset=394807 --batch-size=1
+```
+
+Dit werkt alleen als het opgeslagen hervatpunt precies 394807 is en de import nog
+bezig is met ophalen. Het commando bewaart eerst 394808 als volgende offset, telt
+één overgeslagen record en meldt dit in de console. Daarna haalt het 394808 op en
+gaat verder. Eerder opgeslagen batches blijven behouden. Er wordt geen aanvraag
+voor 394807 meer gedaan en dit object ontbreekt in de gepubliceerde volledige import.
+
+Als een latere aanvraag faalt, hervat je met alleen `--resume`, zonder
+`--skip-offset`. Het opnieuw gebruiken van dezelfde skipoptie wordt geweigerd
+zodra de opgeslagen offset verder staat; zo wordt niet per ongeluk nog een object
+overgeslagen. Andere ongeldige responses blijven gewoon fouten geven na de
+herpogingen. De optie werkt alleen voor deze import, niet als permanente uitsluiting
+van het object-ID. Er is geen nieuwe migratie voor nodig.
+
+Gebruik `--skip-offset` niet samen met `--start-offset`, `--max-records` of
+`--restart`. Bewaar het ruwe foutantwoord en de consolemelding voor de opvolging.
+
 ## Het ruwe antwoord voor één object bekijken
 
 Voer dit na uitrol zelf uit vanuit de projectmap:
