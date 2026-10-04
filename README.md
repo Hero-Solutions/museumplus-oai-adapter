@@ -47,6 +47,41 @@ Bij elke volgende onderbreking volstaat:
 php bin/console app:import-museumplus-records --resume
 ```
 
+## Elk uur automatisch hervatten
+
+Het script `bin/resume-import.sh` hervat de bestaande import met `--resume`.
+Het gebruikt `flock` om overlappende runs over te slaan. Bij een API-fout stopt
+het script; cron probeert het het volgende uur opnieuw. Na een voltooide import
+worden geen records meer opgehaald. Zonder bestaand hervatpunt geeft het een fout.
+
+Voer dit na het uitrollen handmatig uit op de server als gebruiker `vkc`:
+
+```bash
+bash /opt/museumplus-oai-adapter/bin/resume-import.sh
+```
+
+Gebruik `crontab -e` als diezelfde gebruiker en voeg deze regel toe, of vervang
+de eerder ingestelde importregel ermee:
+
+```cron
+0 * * * * /bin/bash /opt/museumplus-oai-adapter/bin/resume-import.sh
+```
+
+PHP en `flock` moeten beschikbaar zijn in het zoekpad van cron. Het script werkt
+vanuit elke werkmap. Het schrijft de uitvoer naar `~/museumplus-import.log` en
+overschrijft dat bestand alleen wanneer een nieuwe poging daadwerkelijk start.
+Een overgeslagen run verandert het logbestand niet. De foutcode van PHP blijft
+behouden; een overgeslagen run eindigt zonder fout.
+
+```bash
+tail -f ~/museumplus-import.log
+```
+
+Start ook handmatige hervatpogingen via dit script om dezelfde lock te gebruiken.
+Verwijder `~/.museumplus-import.lock` niet: het bestand mag blijven staan en de
+lock wordt automatisch vrijgegeven wanneer het proces eindigt. De applicatie
+heeft daarnaast een databaselock tegen imports in dezelfde database.
+
 ## Nieuwe imports
 
 ```bash
