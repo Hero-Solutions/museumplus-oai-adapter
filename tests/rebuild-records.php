@@ -150,3 +150,13 @@ $db = database([$row]);
 $output = runRebuild($db);
 check(count($db->tables['records']) === 1 && str_contains($output, 'field Broken') && str_contains($output, '1 invalid field fragments'), 'Invalid fragments were silently ignored.');
 fwrite(STDOUT, "PASS: active-import lock, multiple batches and visible invalid-fragment warnings\n");
+
+$row = sourceRow(1);
+$row['museumplus_xml'] = str_replace('Source title 1', 'Alpha &amp; Beta', $row['museumplus_xml']);
+$db = database([$row]);
+$saved = $db->tables['records_import'];
+$output = runRebuild($db);
+check(str_contains($db->tables['records']['current:1']['oai_xml'], 'Alpha &amp; Beta'), 'Repaired title was lost.');
+check(str_contains($output, 'field Titel_nl: repaired text escaping') && str_contains($output, '1 field fragments had text escaping repaired'), 'Repair was not reported.');
+check(!str_contains($output, 'invalid field fragments') && $db->tables['records_import'] === $saved, 'Repair was treated as a skipped field or source data was changed.');
+fwrite(STDOUT, "PASS: repaired text is retained, reported separately and never written back to records_import\n");

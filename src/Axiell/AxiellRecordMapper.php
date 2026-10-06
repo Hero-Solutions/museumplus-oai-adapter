@@ -42,7 +42,7 @@ final class AxiellRecordMapper
             'production.date.end' => 'Productiedatum::Production/production.date.end',
         ]);
         $this->addNode($elements, 'production.period', [
-            AxiellElement::text('term', $this->first($record, 'Periode::production.period')),
+            AxiellElement::text('term', $this->first($record, 'Periode::Production_period/production.period') ?? $this->first($record, 'Periode::production.period')),
         ]);
         $this->addMaterials($elements, $record);
         $this->addText($elements, 'physical_description', $this->first($record, 'Physical_description_NL'));
@@ -131,7 +131,7 @@ final class AxiellRecordMapper
     private function addObjectCategory(array &$elements, RecordValues $record): void
     {
         $this->addNode($elements, 'object_category', [
-            AxiellElement::text('term', $this->first($record, 'Term_objectcategorie::object_category')),
+            AxiellElement::text('term', $this->first($record, 'Term_objectcategorie::Object_category/object_category') ?? $this->first($record, 'Term_objectcategorie::object_category')),
         ]);
         $this->addText($elements, 'object_category.lref', $this->first($record, 'Term_objectcategorie_uri::object_category.uri'));
     }

@@ -214,6 +214,12 @@ final class ImportMuseumPlusRecordsCommand extends Command
             $skipped += $stats['skipped'];
             $invalidFragments += $stats['invalidFragments'];
 
+            foreach ($records as $record) {
+                foreach ($record->values->repairedFragments as $fragment) {
+                    $io->note(sprintf('MuseumPlus %s, field %s: repaired text escaping; content retained. Original error: %s', $record->museumplusId, $fragment['field'], $fragment['error']));
+                }
+            }
+
             if ($invalidRecord !== null) {
                 $io->warning(sprintf('Skipped invalid object at offset %d (MuseumPlus ID %s) after an invalid XML response. Error and raw response saved in museumplus_import_errors. Continuing at offset %d with batch size 1.', $offset, $invalidRecord->museumplusId(), $offset + 1));
             } else {

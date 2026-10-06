@@ -28,16 +28,44 @@ final class XmlValueExtractor
     }
 
     /**
-     * @return array{values: array<string, list<string>>, error: string|null}
+     * @return array{values: array<string, list<string>>, error: string|null, repair: string|null}
      */
     public function extractFromFragment(string $fragment): array
     {
         $fragment = trim($fragment);
 
         if ($fragment === '') {
-            return ['values' => [], 'error' => null];
+            return ['values' => [], 'error' => null, 'repair' => null];
         }
 
+        [$document, $error] = $this->loadFragment($fragment);
+        $repair = null;
+        if ($error !== null) {
+            $escaped = $this->escapeExportedText($fragment);
+            if ($escaped !== $fragment) {
+                [$repairedDocument, $repairError] = $this->loadFragment($escaped);
+                if ($repairError === null) {
+                    $document = $repairedDocument;
+                    $repair = $error;
+                    $error = null;
+                }
+            }
+        }
+
+        if ($error !== null) {
+            return ['values' => [], 'error' => $error, 'repair' => null];
+        }
+
+        return [
+            'values' => $this->extractFromElementChildren($document->documentElement),
+            'error' => null,
+            'repair' => $repair,
+        ];
+    }
+
+    /** @return array{DOMDocument, string|null} */
+    private function loadFragment(string $fragment): array
+    {
         $previous = libxml_use_internal_errors(true);
         libxml_clear_errors();
 
@@ -54,13 +82,46 @@ final class XmlValueExtractor
         if (!$loaded || !$document->documentElement instanceof DOMElement) {
             $message = $errors === [] ? 'Invalid XML fragment' : trim($errors[0]->message).' on line '.$errors[0]->line;
 
-            return ['values' => [], 'error' => $message];
+            return [$document, $message];
         }
 
-        return [
-            'values' => $this->extractFromElementChildren($document->documentElement),
-            'error' => null,
-        ];
+        return [$document, null];
+    }
+
+    private function escapeExportedText(string $fragment): string
+    {
+        // These source leaves contain vocabulary text, including literal guide terms
+        // such as <koper en koperlegering>. Do not repair arbitrary malformed tags.
+        $fragment = preg_replace_callback(
+            '~<!\[CDATA\[.*?\]\]>|<!--.*?-->|<(object_category|object_name)>(\s*<[^<>]+>\s*)</\1>~su',
+            static function (array $match): string {
+                if (!isset($match[1])) {
+                    return $match[0];
+                }
+
+                $label = trim($match[2]);
+                if (preg_match('~^<[\p{L}\p{N}][^<>]*\s+[^<>]+>$~u', $label) !== 1 || strpbrk($label, "=/'\"!?") !== false) {
+                    return $match[0];
+                }
+
+                return '<'.$match[1].'>'.str_replace(['<', '>'], ['&lt;', '&gt;'], $match[2]).'</'.$match[1].'>';
+            },
+            $fragment,
+        ) ?? $fragment;
+
+        // Escape bare ampersands only in text. Preserve markup, attributes, CDATA,
+        // comments and entity references; unknown entities must still fail parsing.
+        $parts = preg_split('~(<!\[CDATA\[.*?\]\]>|<!--.*?-->|<(?:"[^"]*"|\'[^\']*\'|[^\'">])*>)~s', $fragment, -1, PREG_SPLIT_DELIM_CAPTURE);
+        if ($parts === false) {
+            return $fragment;
+        }
+        foreach ($parts as $index => $part) {
+            if ($index % 2 === 0) {
+                $parts[$index] = preg_replace('~&(?![^\s<>&;]*;)~u', '&amp;', $part) ?? $part;
+            }
+        }
+
+        return implode('', $parts);
     }
 
     /**

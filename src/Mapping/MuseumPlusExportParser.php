@@ -36,6 +36,7 @@ final class MuseumPlusExportParser
 
             $valuesByPath = [];
             $invalidFragments = [];
+            $repairedFragments = [];
 
             foreach ($objectNode->childNodes as $child) {
                 if (!$child instanceof DOMElement) {
@@ -61,6 +62,10 @@ final class MuseumPlusExportParser
                     continue;
                 }
 
+                if ($parsed['repair'] !== null) {
+                    $repairedFragments[] = ['field' => $sourceField, 'error' => $parsed['repair']];
+                }
+
                 foreach ($parsed['values'] as $path => $values) {
                     $qualifiedPath = $sourceField.'::'.$path;
 
@@ -78,6 +83,7 @@ final class MuseumPlusExportParser
                     objectNumber: $this->extractObjectNumber($objectNode),
                     valuesByPath: $valuesByPath,
                     invalidFragments: $invalidFragments,
+                    repairedFragments: $repairedFragments,
                 ),
                 museumplusXml: trim($document->saveXML($objectNode) ?: ''),
                 museumplusId: $museumplusId,

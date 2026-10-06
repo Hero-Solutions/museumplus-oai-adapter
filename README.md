@@ -151,10 +151,17 @@ museumselectie. Verwijderen en invoegen gebeuren in één transactie: bij een fo
 ongeldige Object-XML, een afwijkend MuseumPlus-ID of een lege selectie wordt alles
 teruggedraaid. Zonder `--replace` weigert het commando een niet-lege tabel.
 
-Ongeldige XML-fragmenten binnen een veld worden zoals bij de normale import
-weggelaten. Het commando meldt daarvoor telkens het MuseumPlus-ID, het veld en de
-fout, plus een eindtotaal. Een succesvolle run garandeert dus geen volledige
-veldinhoud: controleer deze waarschuwingen en de API-output.
+Bij ongeldige veld-XML herstelt de parser twee bekende escapeproblemen: losse
+ampersands in tekst en letterlijke termen zoals `<weeginstrumenten naar vorm>`
+in `object_name` of `object_category`. Het herstel wordt alleen gebruikt als het
+volledige fragment daarna geldige XML is. Import en herbouw melden elk herstel
+met het MuseumPlus-ID en het veld; de herbouw toont ook een afzonderlijk totaal.
+De oorspronkelijke `museumplus_xml` blijft intact.
+
+Andere ongeldige XML-fragmenten binnen een veld worden weggelaten. Het commando
+meldt daarvoor telkens het MuseumPlus-ID, het veld en de fout, plus een eindtotaal.
+Afgebroken Object-XML wordt niet hersteld. Een succesvolle run garandeert dus geen
+volledige veldinhoud: controleer deze waarschuwingen en de API-output.
 
 De databaselock voorkomt overlap met een import. `records_import`, de historische
 foutmeldingen en het hervatpunt blijven intact. Zet de importcron tijdens de
@@ -294,6 +301,7 @@ php -n tests/import-transport.php
 php -n tests/import-resume.php
 php -n tests/dump-response.php
 php -n tests/rebuild-records.php
+php -n tests/xml-fragments.php
 ```
 
 Deze tests gebruiken uitsluitend een HTTP-mock, een database-mock in geheugen en
@@ -304,3 +312,6 @@ De migratie en de SQL-tabelwissel zijn niet op een echte databaseserver uitgevoe
 De herbouwtests controleren nieuwe omzettingen, behoud van brondata en voortgang,
 de lege-tabelcontrole, expliciet vervangen, rollback, batching en waarschuwingen.
 Ook deze tests gebruiken uitsluitend een database-mock, geen MariaDB-server.
+De fragmenttests controleren tekstherstel, behoud van geldige XML en brondata,
+afwijzing van andere XML-fouten en de omzetting van categorieën en periodes met
+zowel de oude als de nieuwe bronstructuur.

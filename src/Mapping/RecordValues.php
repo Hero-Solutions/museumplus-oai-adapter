@@ -9,12 +9,14 @@ final readonly class RecordValues
     /**
      * @param array<string, list<string>> $valuesByPath
      * @param list<array{field: string, error: string}> $invalidFragments
+     * @param list<array{field: string, error: string}> $repairedFragments
      */
     public function __construct(
         public string $sourceIdentifier,
         public ?string $objectNumber,
         public array $valuesByPath,
         public array $invalidFragments = [],
+        public array $repairedFragments = [],
     ) {
     }
 }

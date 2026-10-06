@@ -90,6 +90,7 @@ final class RebuildMuseumPlusRecordsCommand extends Command
                 $lastId = 0;
                 $stored = 0;
                 $invalidFragments = 0;
+                $repairedFragments = 0;
                 $sets = [];
                 while (($rows = $this->connection->fetchAllAssociative(self::SOURCE_BATCH_SQL, [$lastId])) !== []) {
                     foreach ($rows as $row) {
@@ -101,6 +102,10 @@ final class RebuildMuseumPlusRecordsCommand extends Command
                             }
 
                             $record = $parsed[0];
+                            foreach ($record->values->repairedFragments as $fragment) {
+                                $io->note(sprintf('MuseumPlus %s, field %s: repaired text escaping; content retained. Original error: %s', $record->museumplusId, $fragment['field'], $fragment['error']));
+                                ++$repairedFragments;
+                            }
                             foreach ($record->values->invalidFragments as $fragment) {
                                 $io->warning(sprintf('MuseumPlus %s, field %s: %s', $record->museumplusId, $fragment['field'], $fragment['error']));
                                 ++$invalidFragments;
@@ -125,11 +130,14 @@ final class RebuildMuseumPlusRecordsCommand extends Command
                     throw new RuntimeException('No matching museum records found in records_import. No changes were committed.');
                 }
 
-                return compact('stored', 'invalidFragments', 'sets');
+                return compact('stored', 'invalidFragments', 'repairedFragments', 'sets');
             });
 
             $io->success(sprintf('Rebuilt and published %d records. records_import and its checkpoint were not changed.', $summary['stored']));
             $io->table(['Set', 'Records'], array_map(static fn (string $set, int $count): array => [$set, $count], array_keys($summary['sets']), array_values($summary['sets'])));
+            if ($summary['repairedFragments'] > 0) {
+                $io->note(sprintf('%d field fragments had text escaping repaired; their content was retained.', $summary['repairedFragments']));
+            }
             if ($summary['invalidFragments'] > 0) {
                 $io->warning(sprintf('%d invalid field fragments were omitted by the parser, as during a normal import. Review the warnings above.', $summary['invalidFragments']));
             }
