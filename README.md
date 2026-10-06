@@ -114,6 +114,71 @@ rechtstreeks bijwerken in `records`, zonder de volledige import te hervatten.
 Gebruik voor herstel dus altijd `--resume`. `--max-records` kan niet gecombineerd
 worden met `--resume` of `--restart`.
 
+## Records opnieuw opbouwen voor API-tests
+
+`app:rebuild-museumplus-records` leest de bewaarde `museumplus_xml` uit
+`records_import` en verwerkt die opnieuw met de huidige parser, mapping en
+XML-renderer. De gewone import gebruikt dezelfde `MuseumPlusRecordBuilder`.
+Oude `oai_xml`, objectnummers, sets en OAI-identifiers worden niet overgenomen.
+Dit commando vervangt het eerdere voorstel om oude omzettingen via SQL te kopiëren.
+
+Na uitrollen van de code voert de operator op **UAT/test** zelf uit:
+
+```bash
+cd /opt/museumplus-oai-adapter
+php bin/console app:rebuild-museumplus-records
+```
+
+`records` moet leeg zijn. Er wordt geselecteerd op de vier bronlabels
+`Musea Brugge`, `Musea Brugge - Groeningemuseum`, `Mu.ZEE, Kunstmuseum aan zee`
+en `Museum voor Schone Kunsten Gent`. Andere labels worden niet meegenomen.
+Alleen deze selectie wordt opgebouwd, niet de volledige verzameling van ruim
+659.000 records. Het commando leest telkens maximaal 100 bronrecords in geheugen.
+
+De huidige instellingen bepalen de OAI-prefix en de terugvalset; de huidige
+importlogica bepaalt de museumsets. Alle nieuwe records krijgen als datestamp
+het UTC-tijdstip waarop de herbouw start. Dat is de omzettingsdatum, niet de datum
+waarop MuseumPlus opnieuw werd bevraagd.
+
+Na een mappingwijziging kun je expliciet opnieuw met een schone tabel beginnen:
+
+```bash
+php bin/console app:rebuild-museumplus-records --replace
+```
+
+`--replace` vervangt **alle bestaande records** door de opnieuw opgebouwde
+museumselectie. Verwijderen en invoegen gebeuren in één transactie: bij een fout,
+ongeldige Object-XML, een afwijkend MuseumPlus-ID of een lege selectie wordt alles
+teruggedraaid. Zonder `--replace` weigert het commando een niet-lege tabel.
+
+Ongeldige XML-fragmenten binnen een veld worden zoals bij de normale import
+weggelaten. Het commando meldt daarvoor telkens het MuseumPlus-ID, het veld en de
+fout, plus een eindtotaal. Een succesvolle run garandeert dus geen volledige
+veldinhoud: controleer deze waarschuwingen en de API-output.
+
+De databaselock voorkomt overlap met een import. `records_import`, de historische
+foutmeldingen en het hervatpunt blijven intact. Zet de importcron tijdens de
+analyse tijdelijk uit: als een volledige import later afloopt, vervangt die
+`records` opnieuw. Je kunt de cron na het testen hervatten.
+
+De adapter doet bij deze herbouw geen MuseumPlus-aanvragen. Dit test de huidige
+adapter op eerder ontvangen brondata; of MuseumPlus vandaag dezelfde data
+terugstuurt, kan pas na het onderhoud opnieuw gecontroleerd worden.
+
+Na afloop is de selectie beschikbaar via de gewone test-API, bijvoorbeeld:
+
+```text
+/oai?verb=ListRecords&metadataPrefix=oai_adlib
+```
+
+Om identifiers voor gerichte `GetRecord`-tests te vinden:
+
+```sql
+SELECT museumplus_id, oai_identifier, set_spec, object_number
+FROM records
+ORDER BY set_spec, museumplus_id;
+```
+
 ## Ongeldige objecten automatisch isoleren
 
 Dit werkt standaard, ook bij `--resume`:
@@ -201,7 +266,7 @@ teruggestuurd; ontbrekende inhoud wordt niet gereconstrueerd. In `less` springt
 
 ## Consistentie
 
-- De bestaande tabel `records` blijft beschikbaar tot de volledige import klaar is.
+- Bij normale imports blijft de bestaande tabel `records` beschikbaar tot de volledige import klaar is.
 - Een databaselock voorkomt twee gelijktijdige importprocessen in dezelfde database.
 - Gewijzigde bron- of filterinstellingen blokkeren hervatten. Inloggegevens worden
   niet in de voortgangstabel opgeslagen.
@@ -228,6 +293,7 @@ Een hervatpunt kan veranderingen in de externe export niet compenseren.
 php -n tests/import-transport.php
 php -n tests/import-resume.php
 php -n tests/dump-response.php
+php -n tests/rebuild-records.php
 ```
 
 Deze tests gebruiken uitsluitend een HTTP-mock, een database-mock in geheugen en
@@ -235,3 +301,6 @@ fictieve instellingen. Ze starten geen Symfony-kernel en lezen geen `.env`.
 Ze controleren onder meer het halveren, behouden van geldige records, automatisch
 overslaan, atomair loggen, hervatten en efficiënt ophalen bij opeenvolgende fouten.
 De migratie en de SQL-tabelwissel zijn niet op een echte databaseserver uitgevoerd.
+De herbouwtests controleren nieuwe omzettingen, behoud van brondata en voortgang,
+de lege-tabelcontrole, expliciet vervangen, rollback, batching en waarschuwingen.
+Ook deze tests gebruiken uitsluitend een database-mock, geen MariaDB-server.

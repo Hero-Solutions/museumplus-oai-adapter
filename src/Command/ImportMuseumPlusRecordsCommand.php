@@ -4,13 +4,11 @@ declare(strict_types=1);
 
 namespace App\Command;
 
-use App\Axiell\AxiellRecordMapper;
-use App\Axiell\AxiellXmlRenderer;
 use App\Import\MuseumPlusImportState;
+use App\Import\MuseumPlusRecordBuilder;
 use App\Mapping\InvalidMuseumPlusResponse;
 use App\Mapping\MuseumPlusExportParser;
 use App\Mapping\MuseumPlusParsedRecord;
-use App\Mapping\RecordValues;
 use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\DBAL\Connection;
@@ -37,8 +35,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
     public function __construct(
         private readonly HttpClientInterface $httpClient,
         private readonly MuseumPlusExportParser $parser,
-        private readonly AxiellRecordMapper $mapper,
-        private readonly AxiellXmlRenderer $renderer,
+        private readonly MuseumPlusRecordBuilder $recordBuilder,
         private readonly Connection $connection,
     ) {
         parent::__construct();
@@ -286,18 +283,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
             }
 
             $invalidFragments += count($record->values->invalidFragments);
-            $oaiXml = $this->renderer->renderRecord($this->mapper->map($record->values));
-
-            $data = [
-                'museumplus_id' => $record->museumplusId,
-                'oai_identifier' => $identifierPrefix.$record->museumplusId,
-                'set_spec' => $this->setSpec($record->values, $defaultSetSpec),
-                'datestamp' => $formattedDate,
-                'object_number' => $record->values->objectNumber,
-                'oai_xml' => $oaiXml,
-                'museumplus_xml' => $record->museumplusXml,
-                'created_at' => $formattedDate,
-            ];
+            $data = $this->recordBuilder->build($record, $formattedDate, $identifierPrefix, $defaultSetSpec);
 
             if ($upsert) {
                 $this->upsert($table, $data, 'oai_identifier');
@@ -448,28 +434,6 @@ XML,
             $this->xmlAttribute($fieldPath),
             $this->xmlAttribute($operand),
         );
-    }
-
-    private function setSpec(RecordValues $record, string $defaultSetSpec): string
-    {
-        $institution = strtolower($this->first($record, 'Naam_bewaarinstelling::institution.name') ?? '');
-
-        return match (true) {
-            str_contains($institution, 'schone kunsten gent') => 'msk_gent',
-            str_contains($institution, 'mu.zee'), str_contains($institution, 'oostende') => 'muzee',
-            str_contains($institution, 'musea brugge'), str_contains($institution, 'brugge') => 'musea_brugge',
-            default => $defaultSetSpec,
-        };
-    }
-
-    private function first(RecordValues $record, string $path): ?string
-    {
-        $values = array_values(array_filter(
-            array_map(static fn (string $value): string => trim($value), $record->valuesByPath[$path] ?? []),
-            static fn (string $value): bool => $value !== '',
-        ));
-
-        return $values[0] ?? null;
     }
 
     private function env(string $name, ?string $default = null): string

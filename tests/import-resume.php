@@ -8,6 +8,7 @@ declare(strict_types=1);
 use App\Axiell\AxiellRecordMapper;
 use App\Axiell\AxiellXmlRenderer;
 use App\Command\ImportMuseumPlusRecordsCommand;
+use App\Import\MuseumPlusRecordBuilder;
 use App\Mapping\MuseumPlusExportParser;
 use App\Mapping\XmlValueExtractor;
 use App\Normalizer\CreatorNormalizer;
@@ -73,8 +74,10 @@ function runImport(MemoryImportConnection $db, callable $factory, array $options
     $command = new ImportMuseumPlusRecordsCommand(
         $client,
         new MuseumPlusExportParser(new XmlValueExtractor()),
-        new AxiellRecordMapper(new CreatorNormalizer(), new DimensionNormalizer(), new LabelNormalizer()),
-        new AxiellXmlRenderer(new Environment(new FilesystemLoader(dirname(__DIR__).'/templates'))),
+        new MuseumPlusRecordBuilder(
+            new AxiellRecordMapper(new CreatorNormalizer(), new DimensionNormalizer(), new LabelNormalizer()),
+            new AxiellXmlRenderer(new Environment(new FilesystemLoader(dirname(__DIR__).'/templates'))),
+        ),
         $db,
     );
     $tester = new CommandTester($command);

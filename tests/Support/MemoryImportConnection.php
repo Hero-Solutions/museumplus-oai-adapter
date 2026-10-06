@@ -68,8 +68,8 @@ final class MemoryImportConnection extends Connection
             return 1;
         }
 
-        if ($query === 'SELECT COUNT(*) FROM records_import') {
-            return count($this->tables['records_import']);
+        if (in_array($query, ['SELECT COUNT(*) FROM records_import', 'SELECT COUNT(*) FROM records'], true)) {
+            return count($this->tables[substr($query, strlen('SELECT COUNT(*) FROM '))]);
         }
 
         throw new RuntimeException('Unexpected fetchOne: '.$query);
@@ -88,6 +88,27 @@ final class MemoryImportConnection extends Connection
         }
 
         throw new RuntimeException('Unexpected fetchAssociative: '.$query);
+    }
+
+    public function fetchAllAssociative(string $query, array $params = [], array $types = []): array
+    {
+        if (!str_starts_with($query, 'SELECT id, museumplus_id, museumplus_xml') || !str_contains($query, 'FROM records_import') || !str_contains($query, 'LIMIT 100')) {
+            throw new RuntimeException('Unexpected source query: '.$query);
+        }
+
+        $rows = [];
+        foreach ($this->tables['records_import'] as $row) {
+            if ($row['id'] <= $params[0] || !preg_match('~<Naam_bewaarinstelling>(.*?)</Naam_bewaarinstelling>~s', $row['museumplus_xml'], $match)) {
+                continue;
+            }
+            $museum = trim(preg_replace('/<[^>]*>/', '', str_replace(['&lt;', '&gt;'], ['<', '>'], $match[1])));
+            if (in_array($museum, ['Musea Brugge', 'Musea Brugge - Groeningemuseum', 'Mu.ZEE, Kunstmuseum aan zee', 'Museum voor Schone Kunsten Gent'], true)) {
+                $rows[] = array_intersect_key($row, array_flip(['id', 'museumplus_id', 'museumplus_xml']));
+            }
+        }
+        usort($rows, static fn (array $a, array $b): int => $a['id'] <=> $b['id']);
+
+        return array_slice($rows, 0, 100);
     }
 
     public function insert(string $table, array $data, array $types = []): int|string
