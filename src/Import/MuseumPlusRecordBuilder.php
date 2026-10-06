@@ -17,8 +17,10 @@ final readonly class MuseumPlusRecordBuilder
     ) {
     }
 
-    /** @return array<string, string|null> */
-    public function build(MuseumPlusParsedRecord $record, string $date, string $identifierPrefix, string $defaultSetSpec): array
+    /** @param (callable(array{field: string, message: string}): void)|null $onWarning
+     *  @return array<string, string|null>
+     */
+    public function build(MuseumPlusParsedRecord $record, string $date, string $identifierPrefix, string $defaultSetSpec, ?callable $onWarning = null): array
     {
         $institution = '';
         foreach ($record->values->valuesByPath['Naam_bewaarinstelling::institution.name'] ?? [] as $value) {
@@ -35,13 +37,20 @@ final readonly class MuseumPlusRecordBuilder
             default => $defaultSetSpec,
         };
 
+        $mapped = $this->mapper->map($record->values);
+        foreach ($mapped->warnings as $warning) {
+            if ($onWarning !== null) {
+                $onWarning($warning);
+            }
+        }
+
         return [
             'museumplus_id' => $record->museumplusId,
             'oai_identifier' => $identifierPrefix.$record->museumplusId,
             'set_spec' => $setSpec,
             'datestamp' => $date,
             'object_number' => $record->values->objectNumber,
-            'oai_xml' => $this->renderer->renderRecord($this->mapper->map($record->values)),
+            'oai_xml' => $this->renderer->renderRecord($mapped),
             'museumplus_xml' => $record->museumplusXml,
             'created_at' => $date,
         ];

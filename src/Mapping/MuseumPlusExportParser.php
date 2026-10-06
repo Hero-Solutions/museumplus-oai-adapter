@@ -35,6 +35,7 @@ final class MuseumPlusExportParser
             }
 
             $valuesByPath = [];
+            $groupsByPath = [];
             $invalidFragments = [];
             $repairedFragments = [];
 
@@ -66,6 +67,16 @@ final class MuseumPlusExportParser
                     $repairedFragments[] = ['field' => $sourceField, 'error' => $parsed['repair']];
                 }
 
+                foreach ($parsed['groups'] as $group => $rows) {
+                    foreach ($rows as $row) {
+                        $qualifiedRow = [];
+                        foreach ($row as $path => $values) {
+                            $qualifiedRow[$sourceField.'::'.$path] = $values;
+                        }
+                        $groupsByPath[$sourceField.'::'.$group][] = $qualifiedRow;
+                    }
+                }
+
                 foreach ($parsed['values'] as $path => $values) {
                     $qualifiedPath = $sourceField.'::'.$path;
 
@@ -84,6 +95,7 @@ final class MuseumPlusExportParser
                     valuesByPath: $valuesByPath,
                     invalidFragments: $invalidFragments,
                     repairedFragments: $repairedFragments,
+                    groupsByPath: $groupsByPath,
                 ),
                 museumplusXml: trim($document->saveXML($objectNode) ?: ''),
                 museumplusId: $museumplusId,

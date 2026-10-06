@@ -10,6 +10,7 @@ final readonly class RecordValues
      * @param array<string, list<string>> $valuesByPath
      * @param list<array{field: string, error: string}> $invalidFragments
      * @param list<array{field: string, error: string}> $repairedFragments
+     * @param array<string, list<array<string, list<string>>>> $groupsByPath
      */
     public function __construct(
         public string $sourceIdentifier,
@@ -17,6 +18,7 @@ final readonly class RecordValues
         public array $valuesByPath,
         public array $invalidFragments = [],
         public array $repairedFragments = [],
+        public array $groupsByPath = [],
     ) {
     }
 }

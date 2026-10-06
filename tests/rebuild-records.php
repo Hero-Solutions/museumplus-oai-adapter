@@ -160,3 +160,13 @@ check(str_contains($db->tables['records']['current:1']['oai_xml'], 'Alpha &amp; 
 check(str_contains($output, 'field Titel_nl: repaired text escaping') && str_contains($output, '1 field fragments had text escaping repaired'), 'Repair was not reported.');
 check(!str_contains($output, 'invalid field fragments') && $db->tables['records_import'] === $saved, 'Repair was treated as a skipped field or source data was changed.');
 fwrite(STDOUT, "PASS: repaired text is retained, reported separately and never written back to records_import\n");
+
+$row = sourceRow(1);
+$fragment = htmlspecialchars('<Digital_reference><digital_reference>https://www.museabrugge.be/collection/work/id/INV-2</digital_reference><digital_reference.description>workpid</digital_reference.description></Digital_reference>', ENT_QUOTES | ENT_XML1, 'UTF-8');
+$row['museumplus_xml'] = str_replace('</Object>', '<Persistente_uri>'.$fragment.'</Persistente_uri></Object>', $row['museumplus_xml']);
+$db = database([$row]);
+$saved = $db->tables['records_import'];
+$output = runRebuild($db);
+check(str_contains($output, 'MuseumPlus 1 (INV-1), field Persistente_uri') && str_contains($output, '1 mapping warnings'), 'PID omission not reported by rebuild.');
+check(!str_contains($db->tables['records']['current:1']['oai_xml'], 'INV-2') && $db->tables['records_import'] === $saved, 'Bad PID survived or source evidence changed.');
+fwrite(STDOUT, "PASS: rejected PID reported with object identity, omitted from output, preserved in source\n");

@@ -91,6 +91,7 @@ final class RebuildMuseumPlusRecordsCommand extends Command
                 $stored = 0;
                 $invalidFragments = 0;
                 $repairedFragments = 0;
+                $mappingWarnings = 0;
                 $sets = [];
                 while (($rows = $this->connection->fetchAllAssociative(self::SOURCE_BATCH_SQL, [$lastId])) !== []) {
                     foreach ($rows as $row) {
@@ -111,7 +112,10 @@ final class RebuildMuseumPlusRecordsCommand extends Command
                                 ++$invalidFragments;
                             }
 
-                            $data = $this->recordBuilder->build($record, $date->format('Y-m-d H:i:s'), $this->identifierPrefix, $this->defaultSetSpec);
+                            $data = $this->recordBuilder->build($record, $date->format('Y-m-d H:i:s'), $this->identifierPrefix, $this->defaultSetSpec, static function (array $warning) use ($io, $record, &$mappingWarnings): void {
+                                $io->warning(sprintf('MuseumPlus %s (%s), field %s: %s', $record->museumplusId, $record->values->objectNumber, $warning['field'], $warning['message']));
+                                ++$mappingWarnings;
+                            });
                             $data['museumplus_xml'] = $row['museumplus_xml'];
                             $this->connection->insert('records', $data);
                         } catch (\Throwable $error) {
@@ -130,7 +134,7 @@ final class RebuildMuseumPlusRecordsCommand extends Command
                     throw new RuntimeException('No matching museum records found in records_import. No changes were committed.');
                 }
 
-                return compact('stored', 'invalidFragments', 'repairedFragments', 'sets');
+                return compact('stored', 'invalidFragments', 'repairedFragments', 'mappingWarnings', 'sets');
             });
 
             $io->success(sprintf('Rebuilt and published %d records. records_import and its checkpoint were not changed.', $summary['stored']));
@@ -140,6 +144,9 @@ final class RebuildMuseumPlusRecordsCommand extends Command
             }
             if ($summary['invalidFragments'] > 0) {
                 $io->warning(sprintf('%d invalid field fragments were omitted by the parser, as during a normal import. Review the warnings above.', $summary['invalidFragments']));
+            }
+            if ($summary['mappingWarnings'] > 0) {
+                $io->warning(sprintf('%d mapping warnings. Review omitted identifiers, public locations or dates above.', $summary['mappingWarnings']));
             }
 
             return Command::SUCCESS;

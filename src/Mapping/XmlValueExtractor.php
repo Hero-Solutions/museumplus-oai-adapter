@@ -28,14 +28,14 @@ final class XmlValueExtractor
     }
 
     /**
-     * @return array{values: array<string, list<string>>, error: string|null, repair: string|null}
+     * @return array{values: array<string, list<string>>, groups: array<string, list<array<string, list<string>>>>, error: string|null, repair: string|null}
      */
     public function extractFromFragment(string $fragment): array
     {
         $fragment = trim($fragment);
 
         if ($fragment === '') {
-            return ['values' => [], 'error' => null, 'repair' => null];
+            return ['values' => [], 'groups' => [], 'error' => null, 'repair' => null];
         }
 
         [$document, $error] = $this->loadFragment($fragment);
@@ -53,11 +53,22 @@ final class XmlValueExtractor
         }
 
         if ($error !== null) {
-            return ['values' => [], 'error' => $error, 'repair' => null];
+            return ['values' => [], 'groups' => [], 'error' => $error, 'repair' => null];
+        }
+
+        $groups = [];
+        foreach ($document->documentElement->childNodes as $child) {
+            if ($child instanceof DOMElement) {
+                // Keep each repetition intact, including missing optional children.
+                $row = [];
+                $this->extractElement($child, $child->localName, $row);
+                $groups[$child->localName][] = $row;
+            }
         }
 
         return [
             'values' => $this->extractFromElementChildren($document->documentElement),
+            'groups' => $groups,
             'error' => null,
             'repair' => $repair,
         ];

@@ -213,6 +213,9 @@ final class ImportMuseumPlusRecordsCommand extends Command
             $stored += $stats['stored'];
             $skipped += $stats['skipped'];
             $invalidFragments += $stats['invalidFragments'];
+            foreach ($stats['mappingWarnings'] ?? [] as $warning) {
+                $io->warning($warning);
+            }
 
             foreach ($records as $record) {
                 foreach ($record->values->repairedFragments as $fragment) {
@@ -266,7 +269,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
     /**
      * @param list<MuseumPlusParsedRecord> $records
      *
-     * @return array{stored: int, skipped: int, invalidFragments: int}
+     * @return array{stored: int, skipped: int, invalidFragments: int, mappingWarnings: list<string>}
      */
     private function storeBatch(
         array $records,
@@ -279,6 +282,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $stored = 0;
         $skipped = 0;
         $invalidFragments = 0;
+        $mappingWarnings = [];
         $formattedDate = $datestamp->format('Y-m-d H:i:s');
 
         foreach ($records as $record) {
@@ -289,7 +293,9 @@ final class ImportMuseumPlusRecordsCommand extends Command
             }
 
             $invalidFragments += count($record->values->invalidFragments);
-            $data = $this->recordBuilder->build($record, $formattedDate, $identifierPrefix, $defaultSetSpec);
+            $data = $this->recordBuilder->build($record, $formattedDate, $identifierPrefix, $defaultSetSpec, static function (array $warning) use ($record, &$mappingWarnings): void {
+                $mappingWarnings[] = sprintf('MuseumPlus %s (%s), field %s: %s', $record->museumplusId, $record->values->objectNumber, $warning['field'], $warning['message']);
+            });
 
             if ($upsert) {
                 $this->upsert($table, $data, 'oai_identifier');
@@ -304,6 +310,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
             'stored' => $stored,
             'skipped' => $skipped,
             'invalidFragments' => $invalidFragments,
+            'mappingWarnings' => $mappingWarnings,
         ];
     }
 

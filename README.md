@@ -294,6 +294,58 @@ Hervatten gebruikt de offset van dezelfde export. Als de bron intussen objecten
 toevoegt, verwijdert of anders sorteert, is geen consistente snapshot gegarandeerd.
 Een hervatpunt kan veranderingen in de externe export niet compenseren.
 
+## Mapping van de exportstructuur van oktober 2026
+
+Herhaalde groepen blijven bij elkaar, ook wanneer optionele subvelden ontbreken.
+De adapter gebruikt nu de afzonderlijke makerrol, kwalificatie en levensdata.
+Dubbele datumwaarden zoals `1883;1883` worden één datum; `1946-12-02;1946` wordt
+de volledige datum. Tegenstrijdige of ongeldige datums worden weggelaten en gemeld.
+Geboorte- en overlijdensintervallen blijven afzonderlijk behouden; datums worden
+niet meer uit de weergavenaam afgeleid.
+
+Alle collecties, categorieën en periodes blijven behouden, evenals het nieuwe
+specifieke-motiefveld. Verwerving, collectie en techniek volgen waar nodig de
+veldstructuur van de lokale MSK-mapping. Vrije objectnaam-, categorie- en
+materiaalnotities worden niet als FR/EN-thesaurusvertalingen aangeboden.
+
+Publieke standplaatsen komen uitsluitend uit `Current_location/op`, na controle
+tegen de bekende publieke labels in `LabelNormalizer::publicLocation`.
+Onbekende labels en verpakkingsnotities worden weggelaten en gemeld. De interne
+locatie blijft in `current_location/name`, maar wordt nooit meer als `op` gebruikt.
+Breid de lijst alleen uit na controle van een nieuwe legitieme publieke waarde.
+
+`DigitalReferenceValidator` vergelijkt de herkenbare museum-URL's onder
+`/collection/work/id|data|representation/` met de objectnummers van hetzelfde
+bronrecord. Een afwijkende identifier of verkeerd URL-type wordt weggelaten en
+gemeld met MuseumPlus-ID, objectnummer en oorspronkelijke URL. Dit controleert
+de bekende Musea Brugge-, MSK- en Mu.ZEE-hostnamen, inclusief het historische
+`collectie.museabrugge.be`. Er worden geen URL's opgevraagd. Andere HTTP(S)-vormen
+blijven behouden: hun eigendom kan deze lokale controle niet vaststellen.
+Er worden geen vervangende PID's bedacht en de losse MuseumPlus-ARK vervangt
+de bestaande workPID niet. Het object zelf blijft beschikbaar zonder die PID.
+Deze controle garandeert geen globale uniciteit bij onbekende URL-vormen.
+Voor MSK wordt een geaccepteerde workPID ook als `Alternative_number` met type
+`workpid` doorgegeven: beide bestaande MSK DataHub-mappings lezen hem daar.
+Dit is dezelfde bron-URL, zonder nieuw identifierformaat. Een reeds aanwezig
+alternatief nummer van type workPID wordt eveneens gevalideerd en niet verdubbeld.
+
+Import en herbouw tonen deze waarschuwingen in de console; het cron-script neemt
+ze op in zijn bestaande logbestand. De oorspronkelijke XML blijft bewaard.
+Reeds opgebouwde records veranderen pas bij een nieuwe omzetting. Ook hervatten
+werkt eerder opgeslagen batches niet automatisch bij.
+
+Na uitrol kan de **operator zelf** de drie testmusea opnieuw opbouwen uit
+`records_import`, zonder nieuwe MuseumPlus-aanvragen:
+
+```bash
+php bin/console app:rebuild-museumplus-records --replace > var/rebuild-mapping.log 2>&1
+```
+
+Dit vervangt de volledige inhoud van `records` door de herbouwde selectie.
+`records_import`, het hervatpunt en opgeslagen bron-XML blijven behouden.
+Lees `var/rebuild-mapping.log` voor de weggelaten velden en identifiers.
+Voor deze mappingwijziging is geen nieuwe migratie nodig.
+
 ## Lokale tests zonder externe verbindingen
 
 ```bash
@@ -302,6 +354,7 @@ php -n tests/import-resume.php
 php -n tests/dump-response.php
 php -n tests/rebuild-records.php
 php -n tests/xml-fragments.php
+php -n tests/mapping.php
 ```
 
 Deze tests gebruiken uitsluitend een HTTP-mock, een database-mock in geheugen en
