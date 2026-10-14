@@ -104,6 +104,7 @@ foreach ($cases as $name => [$responses, $expectedError]) {
             309000,
             30,
             $io,
+            ['org_1_TestMuseum', 'org_2_OtherMuseum'],
         );
     } catch (RuntimeException $exception) {
         $error = $exception;
@@ -134,6 +135,7 @@ foreach ($cases as $name => [$responses, $expectedError]) {
         check($method === 'POST' && $url === 'https://museumplus.invalid/export', 'Request target changed.');
         check(str_contains($options['body'], 'limit="100" offset="309000"'), 'Retry skipped or changed the failed batch.');
         check($options['body'] === $requests[0][2]['body'], 'Retry changed the search criteria.');
+        check(substr_count($options['body'], 'fieldPath="__orgUnit"') === 2, 'Retry lost the organisation filter.');
         check(($options['verify_peer'] ?? true) && ($options['verify_host'] ?? true), 'TLS verification must stay enabled.');
     }
 

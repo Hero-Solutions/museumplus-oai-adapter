@@ -8,6 +8,67 @@ eerder opgeslagen batches blijven in `records_import` staan.
 De onderstaande installatie- en importcommando's zijn voor de operator om zelf
 uit te voeren. Ze verbinden met de geconfigureerde database en MuseumPlus-API.
 
+## Museumselectie via .env
+
+`MUSEUMPLUS_ORG_UNITS` beperkt de export vooraf tot de opgegeven organisaties.
+Gebruik één code per regel binnen één paar aanhalingstekens. Komma's en spaties
+als scheiding werken ook. Lege regels zijn toegestaan; dubbele codes worden
+verwijderd. Onderstaand volledig voorbeeld bevat de drie groepen van Caroline:
+Brugge, MSK en Mu.ZEE, gescheiden door lege regels.
+
+Voeg dit zelf toe aan de `.env` van de installatie:
+
+```dotenv
+MUSEUMPLUS_ORG_UNITS='
+org_1_MuseaBrugge
+org_1_Groeningemuseum
+org_1_Gruuthusemuseum
+org_1_SintJanshospitaal
+org_1_OnzeLieveVrouwterPotterie
+org_1_StadsarchiefBrugge
+org_1_BibliotheekBiekorfBrugge
+org_1_BisdomBrugge
+org_1_EdeleConfrerievanhetHeiligBloed
+org_1_ErfgoedbibliotheekBiekorf
+org_1_extern
+org_1_BrugseVrije
+org_1_PriveverzamelingBrugge
+org_1_InFlandersFieldsMuseumMuseaBrugge
+org_1_MuseumvoorSchoneKunstenGentMuseaBrugge
+
+org_31_MuseumvoorSchoneKunstenGent
+org_31_SintBaafskathedraalGent
+org_31_SintNiklaaskerkWillebroek
+org_31_VoormaligecollectieMSKGent
+
+org_32_MuZEEKunstmuseumaanzee
+org_32_StadOostende
+org_32_ProvincieWest-VlaanderenMuZee
+org_32_GroeningemuseumMuZee
+org_32_particulierMuZee
+org_32_OnbekendMuZee
+org_32_KoninklijkMuseumvoorMiddenAfrika
+org_32_KoninklijkMuseumvoorSchoneKunstenAntwerpenKMSKA
+org_32_FondationJeanneMatossian
+org_32_FondsRaoulServais
+org_32_DelenPrivateBank
+'
+```
+
+Zet eventuele opmerkingen buiten de aanhalingstekens. De selectie wordt:
+`bestaande categorievoorwaarde AND (__orgUnit = code1 OR __orgUnit = code2 …)`.
+Zonder deze variabele, of met een lege waarde, blijft alleen de bestaande
+categorievoorwaarde actief. Een lijst met uitsluitend komma's wordt geweigerd.
+De import en `app:dump-museumplus-response` gebruiken dezelfde selectie.
+
+Een gewijzigde selectie kan niet hervatten vanaf een oud hervatpunt: de offsets
+hebben dan een andere betekenis. Start in dat geval handmatig een nieuwe import
+met `--restart`; dat wist de tijdelijke import en begint bij offset 0.
+Alleen de volgorde, witruimte of dubbele codes veranderen vereist geen herstart.
+Bestaande hervatpunten zonder organisatiefilter blijven bruikbaar zolang de
+variabele leeg blijft. URL, authenticatie en export-ID worden niet door deze
+instelling gewijzigd.
+
 ## Installatie van deze wijziging
 
 Laat een lopende import eerst eindigen of onderbreek hem. Rol de gewijzigde code

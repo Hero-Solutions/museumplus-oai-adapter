@@ -30,6 +30,7 @@ $_ENV = [
     'MUSEUMPLUS_PASSWORD' => 'fake-password',
     'MUSEUMPLUS_SEARCH_FIELD_PATH' => 'test.field',
     'MUSEUMPLUS_SEARCH_OPERAND' => 'test-value',
+    'MUSEUMPLUS_ORG_UNITS' => '',
     'MUSEUMPLUS_OAI_IDENTIFIER_PREFIX' => 'test:',
     'MUSEUMPLUS_DEFAULT_SET_SPEC' => 'test',
     'MUSEUMPLUS_TIMEOUT_SECONDS' => '1',
@@ -69,7 +70,7 @@ function runImport(MemoryImportConnection $db, callable $factory, array $options
         $limit = (int) $match[1];
         $requests[] = [$offset, $limit];
 
-        return $factory($offset, $limit);
+        return $factory($offset, $limit, $options['body']);
     });
     $command = new ImportMuseumPlusRecordsCommand(
         $client,
@@ -157,6 +158,33 @@ check($db->tables === $saved, 'Bad configuration or invalid XML changed saved da
 unset($db->tables['records_import']['test:2']);
 runImport($db, noFetch(...), ['--resume' => true], 'does not match');
 fwrite(STDOUT, "PASS: changed filter, wrong offset, error pages, broken XML and mismatched staging are rejected\n");
+
+$db = interruptedImport();
+$legacyHash = hash('sha256', json_encode(['https://museumplus.invalid/export', 'test.field', 'test-value', 'test:', 'test'], JSON_THROW_ON_ERROR));
+check($db->tables['museumplus_import_state'][1]['source_hash'] === $legacyHash, 'An empty organisation filter invalidated an existing checkpoint.');
+$saved = $db->tables;
+$_ENV['MUSEUMPLUS_ORG_UNITS'] = 'org_1_TestMuseum,org_2_OtherMuseum';
+runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
+check($db->tables === $saved, 'Adding an organisation filter changed the old checkpoint.');
+
+$db = interruptedImport();
+$saved = $db->tables;
+foreach (['org_1_TestMuseum', 'org_1_TestMuseum,org_3_ThirdMuseum', ''] as $changedSelection) {
+    $_ENV['MUSEUMPLUS_ORG_UNITS'] = $changedSelection;
+    runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
+    check($db->tables === $saved, 'Changing or removing the organisation filter changed saved data.');
+}
+$_ENV['MUSEUMPLUS_ORG_UNITS'] = "\norg_2_OtherMuseum\r\n  org_1_TestMuseum, org_2_OtherMuseum\n";
+$requests = runImport($db, static function (int $offset, int $limit, string $body): MockResponse {
+    check(str_contains($body, '<and><equalsField fieldPath="test.field" operand="test-value"/><or>'), 'Category and organisations were not combined with AND/OR.');
+    check(substr_count($body, 'fieldPath="__orgUnit"') === 2, 'The import omitted or duplicated an organisation.');
+    check(str_contains($body, 'operand="org_1_TestMuseum"') && str_contains($body, 'operand="org_2_OtherMuseum"'), 'The import used the wrong organisations.');
+
+    return batch(['3']);
+}, ['--resume' => true]);
+check($requests === [[2, 1000]], 'Reordering or repeating organisation codes prevented a safe resume.');
+$_ENV['MUSEUMPLUS_ORG_UNITS'] = '';
+fwrite(STDOUT, "PASS: organisation filters reach the export; selection changes block resume, formatting changes preserve it\n");
 
 $db = interruptedImport();
 $db->tables['museumplus_import_state'][1]['next_offset'] = 394000;

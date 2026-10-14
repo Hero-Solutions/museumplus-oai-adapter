@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Command;
 
+use App\Import\MuseumPlusSearch;
 use RuntimeException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -45,8 +46,9 @@ final class DumpMuseumPlusResponseCommand extends Command
         $url = $this->env('MUSEUMPLUS_EXPORT_URL');
         $username = $this->env('MUSEUMPLUS_USERNAME');
         $password = $this->env('MUSEUMPLUS_PASSWORD');
-        $fieldPath = htmlspecialchars($this->env('MUSEUMPLUS_SEARCH_FIELD_PATH'), ENT_QUOTES | ENT_XML1, 'UTF-8');
-        $operand = htmlspecialchars($this->env('MUSEUMPLUS_SEARCH_OPERAND'), ENT_QUOTES | ENT_XML1, 'UTF-8');
+        $fieldPath = $this->env('MUSEUMPLUS_SEARCH_FIELD_PATH');
+        $operand = $this->env('MUSEUMPLUS_SEARCH_OPERAND');
+        $orgUnits = MuseumPlusSearch::parseOrgUnits($this->env('MUSEUMPLUS_ORG_UNITS', ''));
         $timeout = filter_var($this->env('MUSEUMPLUS_TIMEOUT_SECONDS'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
 
         if ($timeout === false) {
@@ -67,20 +69,7 @@ final class DumpMuseumPlusResponseCommand extends Command
             $response = $this->httpClient->request('POST', $url, [
                 'auth_basic' => [$username, $password],
                 'headers' => ['Accept' => 'application/octet-stream', 'Content-Type' => 'application/xml'],
-                'body' => <<<XML
-                    <?xml version="1.0" encoding="UTF-8"?>
-                    <application xmlns="http://www.zetcom.com/ria/ws/module/search">
-                      <modules>
-                        <module name="Object">
-                          <search limit="1" offset="$offset">
-                            <expert>
-                              <equalsField fieldPath="$fieldPath" operand="$operand"/>
-                            </expert>
-                          </search>
-                        </module>
-                      </modules>
-                    </application>
-                    XML,
+                'body' => MuseumPlusSearch::xml($fieldPath, $operand, 1, $offset, $orgUnits),
                 'timeout' => $timeout,
                 'buffer' => false,
             ]);
@@ -119,11 +108,15 @@ final class DumpMuseumPlusResponseCommand extends Command
         return $statusCode >= 400 ? Command::FAILURE : Command::SUCCESS;
     }
 
-    private function env(string $name): string
+    private function env(string $name, ?string $default = null): string
     {
         $value = $_ENV[$name] ?? $_SERVER[$name] ?? getenv($name);
 
         if (!is_string($value) || trim($value) === '') {
+            if ($default !== null) {
+                return $default;
+            }
+
             throw new RuntimeException(sprintf('Missing required env var %s.', $name));
         }
 

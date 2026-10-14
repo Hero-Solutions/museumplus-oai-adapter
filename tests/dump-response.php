@@ -19,6 +19,7 @@ $_ENV = [
     'MUSEUMPLUS_PASSWORD' => 'fake-password',
     'MUSEUMPLUS_SEARCH_FIELD_PATH' => 'test.field',
     'MUSEUMPLUS_SEARCH_OPERAND' => 'one & "two"',
+    'MUSEUMPLUS_ORG_UNITS' => "org_1_TestMuseum\norg_2_OtherMuseum",
     'MUSEUMPLUS_TIMEOUT_SECONDS' => '1',
 ];
 
@@ -51,6 +52,9 @@ try {
             check($method === 'POST' && $url === 'https://museumplus.invalid/export', 'Unexpected request target.');
             check(str_contains($options['body'], '<search limit="1" offset="394807">'), 'Wrong offset or limit.');
             check(str_contains($options['body'], 'operand="one &amp; &quot;two&quot;"'), 'Search filter was not escaped.');
+            check(str_contains($options['body'], '<and>') && str_contains($options['body'], '<or>'), 'Dump must combine the same filters as the import.');
+            check(substr_count($options['body'], 'fieldPath="__orgUnit"') === 2, 'Dump ignored the organisation filter.');
+            check(str_contains($options['body'], 'operand="org_1_TestMuseum"') && str_contains($options['body'], 'operand="org_2_OtherMuseum"'), 'Dump used the wrong organisations.');
 
             return $response;
         });

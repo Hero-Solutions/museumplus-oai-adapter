@@ -6,6 +6,7 @@ namespace App\Command;
 
 use App\Import\MuseumPlusImportState;
 use App\Import\MuseumPlusRecordBuilder;
+use App\Import\MuseumPlusSearch;
 use App\Mapping\InvalidMuseumPlusResponse;
 use App\Mapping\MuseumPlusExportParser;
 use App\Mapping\MuseumPlusParsedRecord;
@@ -95,6 +96,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $password = $this->env('MUSEUMPLUS_PASSWORD');
         $searchFieldPath = $this->env('MUSEUMPLUS_SEARCH_FIELD_PATH');
         $searchOperand = $this->env('MUSEUMPLUS_SEARCH_OPERAND');
+        $orgUnits = MuseumPlusSearch::parseOrgUnits($this->env('MUSEUMPLUS_ORG_UNITS', ''));
         $identifierPrefix = $this->env('MUSEUMPLUS_OAI_IDENTIFIER_PREFIX');
         $defaultSetSpec = $this->env('MUSEUMPLUS_DEFAULT_SET_SPEC');
         $timeout = $this->positiveIntEnv('MUSEUMPLUS_TIMEOUT_SECONDS');
@@ -108,7 +110,12 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $stored = 0;
         $skipped = 0;
         $invalidFragments = 0;
-        $sourceHash = hash('sha256', json_encode([$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec], JSON_THROW_ON_ERROR));
+        $sourceSettings = [$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec];
+        // Preserve existing checkpoints when no organisation filter is configured.
+        if ($orgUnits !== []) {
+            $sourceSettings[] = $orgUnits;
+        }
+        $sourceHash = hash('sha256', json_encode($sourceSettings, JSON_THROW_ON_ERROR));
 
         if (!$partialImport) {
             if ($restart) {
@@ -159,6 +166,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
                     offset: $offset,
                     timeout: $timeout,
                     io: $io,
+                    orgUnits: $orgUnits,
                 );
             } catch (InvalidMuseumPlusResponse $error) {
                 if ($error->museumplusId() === null) {
@@ -347,7 +355,10 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $this->connection->executeStatement($sql, array_values($data));
     }
 
-    /** @return list<MuseumPlusParsedRecord> */
+    /**
+     * @param list<string> $orgUnits
+     * @return list<MuseumPlusParsedRecord>
+     */
     private function fetchBatch(
         string $url,
         string $username,
@@ -358,6 +369,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         int $offset,
         int $timeout,
         SymfonyStyle $io,
+        array $orgUnits = [],
     ): array {
         for ($attempt = 1; ; ++$attempt) {
             $response = null;
@@ -370,7 +382,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
                         'Accept' => 'application/octet-stream',
                         'Content-Type' => 'application/xml',
                     ],
-                    'body' => $this->searchXml($searchFieldPath, $searchOperand, $limit, $offset),
+                    'body' => MuseumPlusSearch::xml($searchFieldPath, $searchOperand, $limit, $offset, $orgUnits),
                     'timeout' => $timeout,
                 ]);
 
@@ -427,30 +439,6 @@ final class ImportMuseumPlusRecordsCommand extends Command
             ));
             sleep($delay);
         }
-    }
-
-    private function searchXml(string $fieldPath, string $operand, int $limit, int $offset): string
-    {
-        return sprintf(
-            <<<'XML'
-<?xml version="1.0" encoding="UTF-8"?>
-<application xmlns="http://www.zetcom.com/ria/ws/module/search">
-  <modules>
-    <module name="Object">
-      <search limit="%d" offset="%d">
-        <expert>
-          <equalsField fieldPath="%s" operand="%s"/>
-        </expert>
-      </search>
-    </module>
-  </modules>
-</application>
-XML,
-            $limit,
-            $offset,
-            $this->xmlAttribute($fieldPath),
-            $this->xmlAttribute($operand),
-        );
     }
 
     private function env(string $name, ?string $default = null): string
@@ -529,10 +517,5 @@ XML,
         }
 
         return $value;
-    }
-
-    private function xmlAttribute(string $value): string
-    {
-        return htmlspecialchars($value, ENT_QUOTES | ENT_XML1, 'UTF-8');
     }
 }
