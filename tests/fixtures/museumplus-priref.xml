@@ -1,0 +1,90 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<ObjectList>
+  <Object>
+    <priref>25001583</priref>
+    <physical_description></physical_description>
+    <AcquisitionTxt></AcquisitionTxt>
+    <AdminNameTxt></AdminNameTxt>
+    <AlternativeNumberTxt></AlternativeNumberTxt>
+    <AssociationPeriodTxt></AssociationPeriodTxt>
+    <AssociationPersonTxt></AssociationPersonTxt>
+    <AssociationSubjectTxt></AssociationSubjectTxt>
+    <CollectionTxt>&lt;collection>Privéverzameling Brugge&lt;/collection></CollectionTxt>
+    <ConditionTxt></ConditionTxt>
+    <ContentDateTxt></ContentDateTxt>
+    <MotifGeneralTxt></MotifGeneralTxt>
+    <MotifSpecificTxt></MotifSpecificTxt>
+    <ContentPersonTxt></ContentPersonTxt>
+    <ContentSubjectTxt></ContentSubjectTxt>
+    <CopyNumberTxt></CopyNumberTxt>
+    <CreditLineTxt></CreditLineTxt>
+    <CurrentLocationTxt>&lt;Current_location>
+  &lt;current_location>extern&lt;/current_location>
+  &lt;op>Depot&lt;/op>
+  &lt;current_location.lref>1411322&lt;/current_location.lref>
+  &lt;current_location.context>extern&lt;/current_location.context>
+  &lt;current_location.type>LOCATION&lt;/current_location.type>
+  &lt;current_location.date>2026-04-08&lt;/current_location.date>
+  &lt;current_location.notes>Testnotitie&lt;/current_location.notes>
+&lt;/Current_location></CurrentLocationTxt>
+    <OwnershipTxt></OwnershipTxt>
+    <DescriptionTxt></DescriptionTxt>
+    <PIDsTxt>&lt;Digital_reference>
+  &lt;digital_reference>https://www.museabrugge.be/collection/work/id/BL-2021-002&lt;/digital_reference>
+  &lt;digital_reference.description>workpid&lt;/digital_reference.description>
+&lt;/Digital_reference>
+&lt;Digital_reference>
+  &lt;digital_reference>https://www.museabrugge.be/collection/work/data/BL-2021-002&lt;/digital_reference>
+  &lt;digital_reference.description>datapid&lt;/digital_reference.description>
+&lt;/Digital_reference>
+&lt;Digital_reference>
+  &lt;digital_reference>https://www.museabrugge.be/collection/work/representation/BL-2021-002&lt;/digital_reference>
+  &lt;digital_reference.description>representationpid&lt;/digital_reference.description>
+&lt;/Digital_reference></PIDsTxt>
+    <DimensionTxt></DimensionTxt>
+    <DocumentationTxt></DocumentationTxt>
+    <EditionTxt></EditionTxt>
+    <ExhibitionTxt></ExhibitionTxt>
+    <InscriptionTxt></InscriptionTxt>
+    <MuseumTxt>&lt;institution.name>Privéverzameling Brugge&lt;/institution.name></MuseumTxt>
+    <MaterialTxt></MaterialTxt>
+    <NotesTxt></NotesTxt>
+    <NumberOfPartsTxt></NumberOfPartsTxt>
+    <ObjectCategoryTxt>&lt;Object_category>
+  &lt;object_category>schilderkunst&lt;/object_category>
+&lt;/Object_category></ObjectCategoryTxt>
+    <ObjectCategoryUri></ObjectCategoryUri>
+    <ObjectNameTxt>&lt;Object_name>
+  &lt;object_name>schilderingen&lt;/object_name>
+&lt;/Object_name></ObjectNameTxt>
+    <NumberTxt>&lt;object_number>BL-2021-002&lt;/object_number></NumberTxt>
+    <OwnerHistoryTxt></OwnerHistoryTxt>
+    <PartTxt></PartTxt>
+    <PrintStateTxt></PrintStateTxt>
+    <CreatorTxt>&lt;Production>
+  &lt;creator>Meester van de Ursulalegende ? &lt;/creator>
+  &lt;creator.lref>25045787&lt;/creator.lref>
+&lt;/Production></CreatorTxt>
+    <ProductionNotesTxt></ProductionNotesTxt>
+    <ProductionPlaceTxt></ProductionPlaceTxt>
+    <ProductionDateTxt>&lt;Production_date>
+  &lt;production.date.start>1450&lt;/production.date.start>
+  &lt;production.date.end>1500&lt;/production.date.end>
+&lt;/Production_date></ProductionDateTxt>
+    <PeriodTxt></PeriodTxt>
+    <ReproductionTxt>&lt;Reproduction>
+  &lt;reproduction.reference>https://id.erfgoeddata.be/ark:/23947/2025c7e1-1245-32b6-6ce6-e5d1f538b11c&lt;/reproduction.reference>
+  &lt;reproduction.reference.lref>25020063&lt;/reproduction.reference.lref>
+&lt;/Reproduction></ReproductionTxt>
+    <RightsTxt></RightsTxt>
+    <StyleTxt>&lt;school_style>Vlaamse primitieven&lt;/school_style></StyleTxt>
+    <TechniqueTxt></TechniqueTxt>
+    <TranslatedTitleTxt></TranslatedTitleTxt>
+    <TitleTxt_nl>&lt;Title>
+  &lt;title>Heilige Martinus&lt;/title>
+  &lt;title.language>nl&lt;/title.language>
+&lt;/Title></TitleTxt_nl>
+    <TitleNotesTxt></TitleNotesTxt>
+    <WebPublicationTxt></WebPublicationTxt>
+  </Object>
+</ObjectList>

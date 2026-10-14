@@ -8,6 +8,51 @@ eerder opgeslagen batches blijven in `records_import` staan.
 De onderstaande installatie- en importcommando's zijn voor de operator om zelf
 uit te voeren. Ze verbinden met de geconfigureerde database en MuseumPlus-API.
 
+## Gewijzigde export met priref en Txt-velden
+
+De op 14 oktober aangeleverde response gebruikt `priref` in plaats van `ID` en
+nieuwe kolomnamen, zoals `NumberTxt`, `MuseumTxt` en `TitleTxt_nl`. De parser
+ondersteunt beide formaten en vertaalt de nieuwe namen naar de bestaande
+mappingpaden. De datumgroep `Production_date` in `ProductionDateTxt` wordt daarbij
+ook herkend. Opgeslagen bron-XML behoudt de oorspronkelijke veldnamen.
+
+De oudere parser sloeg objecten met alleen `priref` over: daardoor kon een volle
+batch `Stored 0 records` melden en toch de volgende offset ophalen. Een niet-lege
+batch zonder enig herkenbaar `ID` of `priref` stopt nu vóór opslag of voortgang.
+Tegenstrijdige waarden wanneer beide ID-velden aanwezig zijn stoppen eveneens.
+Deze formaatfouten worden niet automatisch overgeslagen als ongeldige XML.
+Meldingen over herstelde tekstescaping staan hier los van: die inhoud blijft behouden.
+
+Heeft de oude run al records overgeslagen, start dan **na uitrol opnieuw vanaf nul**.
+De operator voert dit zelf uit:
+
+```bash
+php bin/console app:import-museumplus-records --restart
+```
+
+Gebruik hiervoor geen `--resume`: dat haalt de eerder overgeslagen offsets niet
+opnieuw op. `--restart` wist de tijdelijke import; gepubliceerde records blijven
+staan totdat de nieuwe volledige import succesvol wordt omgewisseld. Er is geen
+nieuwe migratie nodig. De meegeleverde regressietest controleert de aangeleverde
+response en synthetische varianten; niet alle nieuwe lege velden zijn hiermee
+inhoudelijk gevalideerd.
+
+Controle van de gevulde velden in record `25001583` / `BL-2021-002` bracht nog zes
+ontbrekende subvelden in de uitvoer aan het licht. De mapping behoudt nu ook:
+
+- `Production/creator.lref`;
+- `Reproduction/reproduction.reference.lref`;
+- `Current_location/current_location.lref`, `.type`, `.date` en `.notes`.
+
+Deze paden komen voor in de lokale oude Adlib-referentie van set `vkc`. De waarden
+blijven de aangeleverde MuseumPlus-verwijzingen; ze bewijzen geen overeenkomst met
+oude Adlib-ID's. Herhaalde groepen houden hun eigen optionele details. Het publieke
+label `Depot` blijft onder `current_location/op`; `extern` blijft de interne naam
+en context. Het vraagteken in de makersnaam blijft tekst en wordt niet geïnterpreteerd
+als een afzonderlijke kwalificatie. Alle gevulde velden van dit voorbeeld worden
+getest; volledige compatibiliteit met de afzonderlijke oude exportprofielen is
+hiermee niet vastgesteld.
+
 ## Museumselectie via .env
 
 `MUSEUMPLUS_ORG_UNITS` beperkt de export vooraf tot de opgegeven organisaties.
@@ -269,7 +314,7 @@ Dit werkt standaard, ook bij `--resume`:
 2. Geldige kleinere batches worden opgeslagen. Alleen de nog niet verwerkte
    posities worden verder onderzocht; er worden geen hele batches overgeslagen.
 3. Bij limit 1 wordt die ene positie meteen overgeslagen als het ongeldige
-   antwoord één herkenbaar Object met een numeriek ID bevat. Er zijn geen
+   antwoord één herkenbaar Object met een numeriek `ID` of `priref` bevat. Er zijn geen
    herpogingen of wachttijden voor XML-fouten.
 4. Offset, MuseumPlus-ID, foutmelding, ruwe response en importcontext worden in
    `museumplus_import_errors` bewaard. Het foutenlog en het hervatpunt worden
@@ -429,6 +474,7 @@ php -n tests/dump-response.php
 php -n tests/rebuild-records.php
 php -n tests/xml-fragments.php
 php -n tests/mapping.php
+php -n tests/export-format.php
 ```
 
 Deze tests gebruiken uitsluitend een HTTP-mock, een database-mock in geheugen en
@@ -442,3 +488,6 @@ Ook deze tests gebruiken uitsluitend een database-mock, geen MariaDB-server.
 De fragmenttests controleren tekstherstel, behoud van geldige XML en brondata,
 afwijzing van andere XML-fouten en de omzetting van categorieën en periodes met
 zowel de oude als de nieuwe bronstructuur.
+De exportformaattests controleren ook de aangeleverde `priref`-response tot en met
+de uiteindelijke record-XML. De importtests controleren opslag van dit formaat en
+behoud van data en hervatpunt bij een ontbrekend of tegenstrijdig ID-formaat.

@@ -186,6 +186,36 @@ check($requests === [[2, 1000]], 'Reordering or repeating organisation codes pre
 $_ENV['MUSEUMPLUS_ORG_UNITS'] = '';
 fwrite(STDOUT, "PASS: organisation filters reach the export; selection changes block resume, formatting changes preserve it\n");
 
+$db = database();
+$newExport = file_get_contents(__DIR__.'/fixtures/museumplus-priref.xml');
+$requests = runImport($db, static fn (): MockResponse => new MockResponse($newExport));
+check($requests === [[0, 1000]] && array_keys($db->tables['records']) === ['test:25001583'], 'The new export was skipped instead of stored.');
+$row = $db->tables['records']['test:25001583'];
+check($row['object_number'] === 'BL-2021-002' && $row['set_spec'] === 'musea_brugge' && str_contains($row['oai_xml'], 'Heilige Martinus'), 'The new export stored incomplete mapped metadata.');
+check($db->tables['museumplus_import_state'][1]['stored'] === 1 && $db->tables['museumplus_import_state'][1]['skipped'] === 0, 'The new export advanced as skipped.');
+fwrite(STDOUT, "PASS: the supplied priref export is stored and published with mapped metadata\n");
+
+foreach ([
+    '<Object><UnknownId>123</UnknownId><CreatorTxt>Test</CreatorTxt></Object>' => 'without an ID or priref',
+    '<Object><ID>123</ID><priref>456</priref></Object>' => 'conflicting ID and priref',
+] as $object => $message) {
+    $db = interruptedImport();
+    $saved = $db->tables;
+    $requests = runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList>'.$object.'</ObjectList>'), ['--resume' => true, '--allow-empty-swap' => true], $message);
+    check($requests === [[2, 1000]] && $db->tables === $saved && !$db->locked && $db->renames === 0, 'An identity format error advanced, retried, skipped, published or changed stored data.');
+}
+fwrite(STDOUT, "PASS: identity format failures leave the checkpoint and both record tables unchanged\n");
+
+$db = database();
+$requests = runImport($db, static fn (int $offset): MockResponse => match ($offset) {
+    0 => new MockResponse('<ObjectList><Object><priref>123</priref><TitleTxt_nl>unfinished'),
+    1 => new MockResponse($newExport),
+    default => batch([]),
+}, ['--batch-size' => '1']);
+check($requests === [[0, 1], [1, 1], [2, 1]] && array_keys($db->tables['records']) === ['test:25001583'], 'A truncated priref export broke isolation or lost the next record.');
+check($db->tables['museumplus_import_errors'][1]['museumplus_id'] === '123', 'A truncated priref export was logged without its identifier.');
+fwrite(STDOUT, "PASS: truncated priref exports retain existing isolation and error logging\n");
+
 $db = interruptedImport();
 $db->tables['museumplus_import_state'][1]['next_offset'] = 394000;
 $db->tables['museumplus_import_state'][1]['skipped'] = 393998;

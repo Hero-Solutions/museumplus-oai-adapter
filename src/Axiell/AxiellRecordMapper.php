@@ -97,6 +97,7 @@ final class AxiellRecordMapper
         ]);
         $this->addSimpleRows($elements, 'Reproduction', $record, [
             'reproduction.reference' => 'Reproductie::Reproduction/reproduction.reference',
+            'reproduction.reference.lref' => 'Reproductie::Reproduction/reproduction.reference.lref',
             'reproduction.type' => 'Reproductie::Reproduction/reproduction.type',
             'reproduction.notes' => 'Reproductie::Reproduction/reproduction.notes',
             'reproduction.date' => 'Reproductie::Reproduction/reproduction.date',
@@ -283,6 +284,10 @@ final class AxiellRecordMapper
         $rows = $this->rows($record, [
             'value' => 'Huidige_standplaats::Current_location/current_location',
             'context' => 'Huidige_standplaats::Current_location/current_location.context',
+            'lref' => 'Huidige_standplaats::Current_location/current_location.lref',
+            'type' => 'Huidige_standplaats::Current_location/current_location.type',
+            'date' => 'Huidige_standplaats::Current_location/current_location.date',
+            'notes' => 'Huidige_standplaats::Current_location/current_location.notes',
             'op' => 'Huidige_standplaats::Current_location/op',
         ]);
 
@@ -302,6 +307,10 @@ final class AxiellRecordMapper
                     ...$this->texts('op', $public),
                 ]),
                 ...$this->texts('current_location.context', $row['context']),
+                ...$this->texts('current_location.lref', $row['lref']),
+                ...$this->texts('current_location.type', $row['type']),
+                ...$this->texts('current_location.date', $row['date']),
+                ...$this->texts('current_location.notes', $row['notes']),
             ]);
         }
     }
@@ -341,6 +350,7 @@ final class AxiellRecordMapper
     {
         $paths = [
             'name' => 'Naam_vervaardiger::Production/creator',
+            'lref' => 'Naam_vervaardiger::Production/creator.lref',
             'role' => 'Naam_vervaardiger::Production/creator.role',
             'qualifier' => 'Naam_vervaardiger::Production/creator.qualifier',
         ];
@@ -366,6 +376,8 @@ final class AxiellRecordMapper
             }
             $this->addNode($elements, 'Production', [
                 AxiellElement::node('creator', $creator),
+                // Keep the source MuseumPlus link; it is not a legacy Adlib ID.
+                ...$this->texts('creator.lref', $row['lref']),
                 AxiellElement::text('creator.date_of_birth', $dates['birth.date.start']),
                 AxiellElement::text('creator.date_of_death', $dates['death.date.start']),
                 AxiellElement::node('creator.role', $this->texts('term', $row['role'])),
