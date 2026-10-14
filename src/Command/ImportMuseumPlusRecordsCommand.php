@@ -111,6 +111,10 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $sourceHash = hash('sha256', json_encode([$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec], JSON_THROW_ON_ERROR));
 
         if (!$partialImport) {
+            if ($restart) {
+                $io->writeln('Clearing records_import with TRUNCATE before restarting. This can wait for existing database locks.');
+            }
+
             $state = $progress->prepare($sourceHash, $resume, $restart, $startOffset);
 
             if ($skipOffset !== null) {

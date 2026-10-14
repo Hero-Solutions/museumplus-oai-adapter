@@ -37,6 +37,10 @@ final class MuseumPlusImportState
         $state = $this->connection->fetchAssociative('SELECT * FROM '.self::TABLE.' WHERE id = 1');
 
         if ($state !== false && !$restart && ($state['status'] !== 'completed' || $resume)) {
+            if ($state['status'] === 'resetting') {
+                throw new RuntimeException('Import reset was interrupted. Run again with --restart to finish clearing records_import and start from zero.');
+            }
+
             if (!in_array($state['status'], ['fetching', 'ready', 'completed'], true)) {
                 throw new RuntimeException('Unknown import checkpoint status. Refusing to fetch or publish.');
             }
@@ -56,18 +60,19 @@ final class MuseumPlusImportState
             return $state;
         }
 
-        $summary = $this->connection->fetchAssociative('SELECT COUNT(*) AS stored, MIN(datestamp) AS first_date, MAX(datestamp) AS last_date FROM records_import');
-        $stored = (int) $summary['stored'];
+        $stored = 0;
         $datestamp = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
 
         if ($resume) {
             // Older runs have no checkpoint. The operator supplies the failed fetch offset.
+            $summary = $this->connection->fetchAssociative('SELECT COUNT(*) AS stored, MIN(datestamp) AS first_date, MAX(datestamp) AS last_date FROM records_import');
+            $stored = (int) $summary['stored'];
             if ($startOffset === 0 || $stored === 0 || $stored > $startOffset || $summary['first_date'] !== $summary['last_date']) {
                 throw new RuntimeException('No saved checkpoint. Recover an existing records_import with --resume --start-offset=<failed fetch offset>; it must contain batches from one full import.');
             }
 
             $datestamp = $summary['first_date'];
-        } elseif (!$restart && $state === false && $stored > 0) {
+        } elseif (!$restart && $state === false && (int) $this->connection->fetchOne('SELECT COUNT(*) FROM records_import') > 0) {
             throw new RuntimeException('records_import already contains data without a checkpoint. Use --resume --start-offset=<failed fetch offset> to keep it, or --restart to discard it.');
         }
 
@@ -80,18 +85,21 @@ final class MuseumPlusImportState
             'skipped' => $resume ? $startOffset - $stored : 0,
             'invalid_fragments' => 0,
             'consecutive_invalid' => 0,
-            'status' => 'fetching',
+            'status' => $resume ? 'fetching' : 'resetting',
         ];
 
-        $this->connection->transactional(function () use ($resume, $newState): void {
-            // DELETE keeps clearing the staging table and resetting the checkpoint atomic.
-            if (!$resume) {
-                $this->connection->executeStatement('DELETE FROM records_import');
-            }
-
+        // Commit the reset marker before TRUNCATE, which implicitly commits.
+        // An interruption must never leave an old checkpoint usable with an empty table.
+        $this->connection->transactional(function () use ($newState): void {
             $this->connection->executeStatement('DELETE FROM '.self::TABLE);
             $this->connection->insert(self::TABLE, $newState);
         });
+
+        if (!$resume) {
+            $this->connection->executeStatement('TRUNCATE TABLE records_import');
+            $newState['status'] = 'fetching';
+            $this->connection->update(self::TABLE, ['status' => 'fetching'], ['id' => 1]);
+        }
 
         return $newState;
     }

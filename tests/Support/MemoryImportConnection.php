@@ -14,10 +14,14 @@ final class MemoryImportConnection extends Connection
     public array $tables = ['records' => [], 'records_import' => [], 'museumplus_import_state' => [], 'museumplus_import_errors' => []];
     public bool $locked = false;
     public bool $failCheckpoint = false;
+    public bool $failStateInsert = false;
     public bool $failErrorLog = false;
     public ?string $failInsertId = null;
     public ?string $failRename = null;
+    public ?string $failTruncate = null;
     public int $renames = 0;
+    public int $importScans = 0;
+    public int $importTruncates = 0;
     private ?array $snapshot = null;
 
     public function __construct()
@@ -69,6 +73,10 @@ final class MemoryImportConnection extends Connection
         }
 
         if (in_array($query, ['SELECT COUNT(*) FROM records_import', 'SELECT COUNT(*) FROM records'], true)) {
+            if ($query === 'SELECT COUNT(*) FROM records_import') {
+                ++$this->importScans;
+            }
+
             return count($this->tables[substr($query, strlen('SELECT COUNT(*) FROM '))]);
         }
 
@@ -82,6 +90,7 @@ final class MemoryImportConnection extends Connection
         }
 
         if ($query === 'SELECT COUNT(*) AS stored, MIN(datestamp) AS first_date, MAX(datestamp) AS last_date FROM records_import') {
+            ++$this->importScans;
             $dates = array_column($this->tables['records_import'], 'datestamp');
 
             return ['stored' => count($dates), 'first_date' => $dates === [] ? null : min($dates), 'last_date' => $dates === [] ? null : max($dates)];
@@ -115,6 +124,10 @@ final class MemoryImportConnection extends Connection
     {
         if (!array_key_exists($table, $this->tables)) {
             throw new RuntimeException('Missing table: '.$table);
+        }
+
+        if ($table === 'museumplus_import_state' && $this->failStateInsert) {
+            throw new RuntimeException('Simulated checkpoint insert failure');
         }
 
         if (isset($data['museumplus_id']) && $data['museumplus_id'] === $this->failInsertId) {
@@ -165,6 +178,25 @@ final class MemoryImportConnection extends Connection
     public function executeStatement(string $sql, array $params = [], array $types = []): int|string
     {
         $sql = preg_replace('/\s+/', ' ', trim($sql));
+
+        if (str_starts_with($sql, 'TRUNCATE TABLE ') && $this->snapshot !== null) {
+            throw new RuntimeException('TRUNCATE must run outside a transaction.');
+        }
+
+        if ($sql === 'TRUNCATE TABLE records_import') {
+            if ($this->failTruncate === 'before') {
+                throw new RuntimeException('Simulated failure before truncate');
+            }
+
+            $this->tables['records_import'] = [];
+            ++$this->importTruncates;
+
+            if ($this->failTruncate === 'after') {
+                throw new RuntimeException('Simulated lost response after truncate');
+            }
+
+            return 0;
+        }
 
         if (preg_match('/^(?:DELETE FROM|TRUNCATE TABLE) (\w+)$/', $sql, $match)) {
             $count = count($this->tables[$match[1]]);

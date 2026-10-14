@@ -95,6 +95,19 @@ na het publiceren stopte. `--restart` gooit bewust de tijdelijke import weg en
 begint vanaf nul. Zonder die optie worden bestaande tijdelijke gegevens zonder
 hervatpunt nooit stilzwijgend gewist.
 
+Een nieuwe volledige import leegt `records_import` met `TRUNCATE TABLE`.
+Bij `--restart` wordt ook de voorafgaande volledige telling overgeslagen.
+`TRUNCATE` is niet terugdraaibaar en kan wachten op bestaande databaselocks.
+Laat een eerdere import en eventuele rollback dus eerst eindigen.
+
+De adapter bewaart vóór het leegmaken de status `resetting`, buiten de
+`TRUNCATE`. Pas daarna wordt het hervatpunt op `fetching` gezet. Bij een
+onderbreking tijdens deze reset weigert de adapter gewoon hervatten en vraagt
+hij opnieuw `--restart`. Zo wordt een oud hervatpunt nooit gebruikt met een
+leeggemaakte tabel. De gepubliceerde tabel `records` en het foutenlog blijven
+behouden. Voor deze wijziging is geen extra migratie nodig; `TRUNCATE` vereist
+het bestaande `DROP`-recht dat ook bij publiceren wordt gebruikt.
+
 De standaardbatch is 1000. `--batch-size` mag ook tijdens hervatten veranderen.
 Transportfouten en HTTP 500/502/503/504 krijgen samen maximaal drie herpogingen
 per batch. Ongeldige XML wordt niet opnieuw geprobeerd. Herkenbare objectexports

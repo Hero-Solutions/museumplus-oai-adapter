@@ -188,9 +188,53 @@ check($requests === [[309000, 1000]] && count($db->tables['records']) === 3, 'Le
 fwrite(STDOUT, "PASS: legacy staging is preserved and adopted at the supplied failed offset\n");
 
 $db = interruptedImport();
-$requests = runImport($db, static fn (): MockResponse => batch(['9']), ['--restart' => true]);
+$scans = $db->importScans;
+$truncates = $db->importTruncates;
+$_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'new-export-filter';
+$requests = runImport($db, static function () use ($db, $scans, $truncates): MockResponse {
+    check($db->importScans === $scans, 'Restart scanned the old staging table before discarding it.');
+    check($db->importTruncates === $truncates + 1 && $db->tables['records_import'] === [], 'Restart did not truncate staging before fetching.');
+    check($db->tables['museumplus_import_state'][1]['status'] === 'fetching' && $db->tables['museumplus_import_state'][1]['next_offset'] === 0, 'Restart did not finish resetting before fetching.');
+    check(array_keys($db->tables['records']) === ['test:old'], 'Restart cleared published records before the new import finished.');
+
+    return batch(['9']);
+}, ['--restart' => true]);
+$_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'test-value';
 check($requests === [[0, 1000]] && array_keys($db->tables['records']) === ['test:9'], 'Explicit restart did not reset the staging import.');
-fwrite(STDOUT, "PASS: explicit restart discards the unfinished import and starts from zero\n");
+fwrite(STDOUT, "PASS: explicit restart truncates without scanning, accepts a changed source and starts from zero\n");
+
+$db = interruptedImport();
+$saved = $db->tables;
+$truncates = $db->importTruncates;
+$db->failStateInsert = true;
+runImport($db, noFetch(...), ['--restart' => true], 'checkpoint insert failure');
+check($db->tables === $saved && $db->importTruncates === $truncates && !$db->locked, 'A failed reset marker changed data or left a lock.');
+$db->failStateInsert = false;
+check(runImport($db, static fn (): MockResponse => batch(['3']), ['--resume' => true]) === [[2, 1000]], 'A failed reset marker made the original checkpoint unusable.');
+fwrite(STDOUT, "PASS: failure saving the reset marker preserves the original import\n");
+
+foreach (['before', 'after', 'checkpoint'] as $failurePoint) {
+    $db = interruptedImport();
+    $staging = $db->tables['records_import'];
+    $published = $db->tables['records'];
+    $db->failTruncate = $failurePoint === 'checkpoint' ? null : $failurePoint;
+    $db->failCheckpoint = $failurePoint === 'checkpoint';
+    runImport($db, noFetch(...), ['--restart' => true], $failurePoint === 'checkpoint' ? 'checkpoint failure' : $failurePoint.' truncate');
+    check($db->tables['records_import'] === ($failurePoint === 'before' ? $staging : []), 'Truncate failure had unexpected staging contents.');
+    check($db->tables['museumplus_import_state'][1]['status'] === 'resetting' && $db->tables['records'] === $published && !$db->locked, 'An interrupted reset left a usable checkpoint or changed published records.');
+
+    $saved = $db->tables;
+    foreach ([[], ['--resume' => true], ['--resume' => true, '--start-offset' => '2'], ['--resume' => true, '--allow-empty-swap' => true]] as $options) {
+        runImport($db, noFetch(...), $options, 'Run again with --restart');
+        check($db->tables === $saved && $db->renames === 0, 'An interrupted reset resumed or published an incomplete import.');
+    }
+
+    $db->failTruncate = null;
+    $db->failCheckpoint = false;
+    $requests = runImport($db, static fn (): MockResponse => batch(['9']), ['--restart' => true]);
+    check($requests === [[0, 1000]] && array_keys($db->tables['records']) === ['test:9'], 'Restart could not recover an interrupted reset.');
+}
+fwrite(STDOUT, "PASS: failures before/after truncate and before fetching require an explicit restart\n");
 
 $db = database();
 runImport($db, static fn (int $offset): MockResponse => $offset === 0 ? batch(['1', '']) : new MockResponse('Unauthorized', ['http_code' => 401]), ['--batch-size' => '2'], 'HTTP 401');
