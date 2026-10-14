@@ -53,6 +53,50 @@ als een afzonderlijke kwalificatie. Alle gevulde velden van dit voorbeeld worden
 getest; volledige compatibiliteit met de afzonderlijke oude exportprofielen is
 hiermee niet vastgesteld.
 
+## Alle opgeslagen MuseumPlus-bronrecords naar XML
+
+Na uitrol voert de **operator zelf** dit commando uit vanuit de adaptermap:
+
+```bash
+php bin/console app:export-museumplus-source var/museumplus-bronrecords.xml
+```
+
+Het leest alle rijen uit `records`, in volgorde van database-ID en batches van 100.
+De kolom `museumplus_xml` wordt byte voor byte overgenomen in één bestand met een
+XML-declaratie, `<ObjectList>` eromheen en een nieuwe regel tussen de records.
+Er wordt geen XML geparseerd, hersteld, opnieuw gemapt of gefilterd. `oai_xml` wordt
+niet gebruikt. Databasegegevens en hervatpunten blijven ongewijzigd; er zijn geen
+MuseumPlus-aanvragen. Bestaande bestanden worden niet overschreven.
+
+Dit bevat **alle opgeslagen bronrecords**, dus de selectie die daadwerkelijk is
+geïmporteerd. Niet-opgehaalde of overgeslagen objecten zitten er niet in. Het is geen
+export van alle tabellen of automatisch van de volledige MuseumPlus-database.
+
+Voor de reeds opgeslagen batches van een nog niet gepubliceerde import:
+
+```bash
+php bin/console app:export-museumplus-source var/museumplus-bronrecords-import.xml --table=records_import
+```
+
+`records` bevat de gepubliceerde dataset; `records_import` de tijdelijke import.
+Na een geslaagde volledige import is die tijdelijke tabel normaal leeg. Beide
+tabellen worden nooit samengevoegd. Import, herbouw en bronexport delen dezelfde
+lock: voer de export uit wanneer geen import of herbouw actief is, anders stopt
+het commando zonder records te lezen. Wijzig deze tabellen ook niet handmatig
+tijdens de export. Alleen een geslaagde run meldt het aantal geëxporteerde records.
+Bij een opgevangen fout wordt het onvolledige bestand verwijderd; na een harde
+onderbreking kan het achterblijven.
+
+**Nauwkeurigheid:** de opgeslagen bron bevat de oorspronkelijke veldnamen en
+inhoud, zonder onze mapping of veldreparaties. Bij de eerdere import heeft
+`DOMDocument::saveXML()` het `<Object>` echter opnieuw als XML uitgeschreven.
+Escaping en lege tags kunnen daardoor anders zijn geschreven dan in de ontvangen
+HTTP-response. Dit commando bewaart exact wat in `museumplus_xml` staat; een
+byte-exacte reconstructie van de oorspronkelijke API-response is vanuit deze
+kolom onmogelijk. Daarvoor moeten responses bij het ophalen rechtstreeks worden
+bewaard. `app:dump-museumplus-export` doet dat voor een volledige nieuwe ophaalronde;
+`app:dump-museumplus-response` voor één offset. Dit reconstrueert geen eerdere import.
+
 ## Museumselectie via .env
 
 `MUSEUMPLUS_ORG_UNITS` beperkt de export vooraf tot de opgegeven organisaties.
@@ -370,6 +414,56 @@ aan het automatische foutenlog toegevoegd.
 Gebruik `--skip-offset` niet samen met `--start-offset`, `--max-records` of
 `--restart`. Bewaar het ruwe foutantwoord en de consolemelding voor de opvolging.
 
+## Volledige MuseumPlus-export als ongewijzigde responses bewaren
+
+Na uitrol voert de **operator zelf** dit commando uit vanuit de adaptermap:
+
+```bash
+php bin/console app:dump-museumplus-export var/museumplus-raw-20261014
+```
+
+Dit haalt vanaf offset 0 alle batches op met dezelfde export-URL, authenticatie,
+categorie- en museumfilters als de import. Standaard is de batchgrootte 1000;
+`--batch-size=100` vraagt kleinere batches. Het is de volledige **geconfigureerde
+selectie** die het exportprofiel beschikbaar stelt, geen ongefilterde databaseback-up.
+Er wordt niets in de database opgeslagen of gewijzigd.
+
+Elke ontvangen HTTP-responsebody gaat rechtstreeks naar een eigen bestand, zoals
+`offset-000000000000.xml`. Alle ontvangen bytes blijven behouden: inclusief
+XML-declaratie, regeleinden, escaping, lege tags en eventuele fouten. Er wordt niets
+samengevoegd, hersteld, gemapt of opnieuw als XML uitgeschreven. Het gaat om de
+responsebody, niet om een netwerkdump inclusief HTTP-headers en transportframing.
+Het commando vraagt ongecomprimeerde inhoud (`Accept-Encoding: identity`).
+
+Pas na opslag wordt het bestand apart gelezen om directe `<Object>`-elementen te
+tellen en de volgende offset te bepalen. Die leesstap verandert het bestand niet.
+Ook na een korte batch gaat het commando verder; alleen een geldige lege
+`ObjectList` beëindigt de ophaalronde. Ook die laatste response wordt bewaard.
+
+`manifest.jsonl` bevat per aanvraag de offset, aangevraagde limiet, HTTP-status,
+ontvangen byteaantal, SHA-256, transferstatus, objecttelling en volgende offset.
+Het laatste resultaat `complete` bevestigt een afgeronde ronde. Bron en filters
+krijgen een hash; inloggegevens en URL worden niet in dit log geschreven.
+
+HTTP-fouten, transportfouten en ongeldige/onherkenbare XML stoppen de ronde met een
+foutstatus. Reeds ontvangen bytes blijven bewaard, ook bij een afgebroken response.
+Er wordt niet automatisch herhaald of overgeslagen. Een identieke opeenvolgende
+batch stopt eveneens: mogelijk negeert de server dan de offset. Bij een harde
+onderbreking of schrijffout kan de laatste response onvolledig zijn en nog geen
+logregel hebben; het ontbreken van `complete` betekent dat de ronde niet af is.
+
+Om na een fout verder te gaan, gebruik je de gemelde foutoffset in een **nieuwe map**.
+Bijvoorbeeld, alleen als 2000 de daadwerkelijk gemelde offset is:
+
+```bash
+php bin/console app:dump-museumplus-export var/museumplus-raw-vervolg --start-offset=2000
+```
+
+Bewaar beide mappen; de foutresponse wordt nooit overschreven. Bestaande mappen
+worden geweigerd en de bovenliggende map moet bestaan. Gebruik bij hervatten
+dezelfde bron en filters. Als MuseumPlus tussendoor records toevoegt, verwijdert
+of hersorteert, garandeert offsetpaginering geen consistente momentopname.
+
 ## Het ruwe antwoord voor één object bekijken
 
 Voer dit na uitrol zelf uit vanuit de projectmap:
@@ -475,6 +569,8 @@ php -n tests/rebuild-records.php
 php -n tests/xml-fragments.php
 php -n tests/mapping.php
 php -n tests/export-format.php
+php -n tests/export-source.php
+php -n tests/dump-export.php
 ```
 
 Deze tests gebruiken uitsluitend een HTTP-mock, een database-mock in geheugen en
@@ -491,3 +587,9 @@ zowel de oude als de nieuwe bronstructuur.
 De exportformaattests controleren ook de aangeleverde `priref`-response tot en met
 de uiteindelijke record-XML. De importtests controleren opslag van dit formaat en
 behoud van data en hervatpunt bij een ontbrekend of tegenstrijdig ID-formaat.
+De bronexporttest gebruikt uitsluitend een database-mock met synthetische XML.
+Hij controleert bytebehoud, meerdere batches, tabelkeuze, lege tabellen, bestaande
+bestanden, gelijktijdige imports en fouten zonder een succesvolle gedeeltelijke export.
+De volledige responsedump wordt alleen met HTTP-mocks getest: bytebehoud over
+meerdere chunks, filters, korte pagina's, einddetectie, foutantwoorden, gedeeltelijke
+transfers, herhaalde batches, handmatig hervatten en bescherming van bestaande bestanden.
