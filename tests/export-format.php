@@ -48,8 +48,8 @@ $xpath = new DOMXPath($document);
 foreach ([
     '/record/priref' => '25001583',
     '/record/object_number' => 'BL-2021-002',
-    '/record/institution.name/name' => 'Privéverzameling Brugge',
-    '/record/collection' => 'Privéverzameling Brugge',
+    '/record/institution.name/name' => 'Musea Brugge',
+    '/record/institution.original_name' => 'Privéverzameling Brugge',
     '/record/Title/title' => 'Heilige Martinus',
     '/record/Title/title.language' => 'nl',
     '/record/Production/creator/name' => 'Meester van de Ursulalegende ?',
@@ -95,7 +95,7 @@ foreach ($fields as $field => $fragment) {
 $record = $parser->parse($xml.'</Object></ObjectList>')[0];
 check(count($record->values->repairedFragments) === 1 && $record->values->repairedFragments[0]['field'] === 'DescriptionTxt', 'Diagnostics must use the original export field name.');
 $row = $builder->build($record, '2026-10-14 12:00:00', 'test:', 'fallback');
-check($row['set_spec'] === 'msk_gent', 'Revised museum column did not preserve MSK routing.');
+check($row['set_spec'] === 'mskObj', 'Revised museum column did not preserve MSK routing.');
 check($document->loadXML($row['oai_xml'], LIBXML_NONET), 'Extended sample produced invalid XML.');
 $xpath = new DOMXPath($document);
 check($xpath->evaluate('count(/record/Title[title="A"]/title.type)') === 0.0 && $xpath->evaluate('string(/record/Title[title="B"]/title.type)') === 'oude titel', 'Title repetitions were merged.');

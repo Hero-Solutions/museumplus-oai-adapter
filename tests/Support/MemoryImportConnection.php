@@ -101,19 +101,16 @@ final class MemoryImportConnection extends Connection
 
     public function fetchAllAssociative(string $query, array $params = [], array $types = []): array
     {
-        if (!str_starts_with($query, 'SELECT id, museumplus_id, museumplus_xml') || !str_contains($query, 'FROM records_import') || !str_contains($query, 'LIMIT 100')) {
+        if (!str_starts_with($query, 'SELECT id, museumplus_id, museumplus_xml') || !preg_match('/FROM (records_import|records)\b/', $query, $table) || !str_contains($query, 'LIMIT 100')) {
             throw new RuntimeException('Unexpected source query: '.$query);
         }
 
         $rows = [];
-        foreach ($this->tables['records_import'] as $row) {
-            if ($row['id'] <= $params[0] || !preg_match('~<Naam_bewaarinstelling>(.*?)</Naam_bewaarinstelling>~s', $row['museumplus_xml'], $match)) {
+        foreach ($this->tables[$table[1]] as $row) {
+            if ($row['id'] <= $params[0]) {
                 continue;
             }
-            $museum = trim(preg_replace('/<[^>]*>/', '', str_replace(['&lt;', '&gt;'], ['<', '>'], $match[1])));
-            if (in_array($museum, ['Musea Brugge', 'Musea Brugge - Groeningemuseum', 'Mu.ZEE, Kunstmuseum aan zee', 'Museum voor Schone Kunsten Gent'], true)) {
-                $rows[] = array_intersect_key($row, array_flip(['id', 'museumplus_id', 'museumplus_xml']));
-            }
+            $rows[] = array_intersect_key($row, array_flip(['id', 'museumplus_id', 'museumplus_xml', 'raw_response_id'])) + ['raw_response_id'=>null];
         }
         usort($rows, static fn (array $a, array $b): int => $a['id'] <=> $b['id']);
 
@@ -148,6 +145,7 @@ final class MemoryImportConnection extends Connection
             throw new RuntimeException('Duplicate key in '.$table);
         }
 
+        $this->assertUniquePriref($table, $data);
         $this->tables[$table][$key] = $data;
 
         return 1;
@@ -155,6 +153,19 @@ final class MemoryImportConnection extends Connection
 
     public function update(string $table, array $data, array $criteria = [], array $types = []): int|string
     {
+        if ($table === 'records') {
+            foreach ($this->tables[$table] as $key => $row) {
+                if (($row['id'] ?? null) === $criteria['id']) {
+                    if (($row['museumplus_id'] ?? null) === $this->failInsertId) throw new RuntimeException('Simulated record update failure');
+                    $this->assertUniquePriref($table, $data, (string) $key);
+                    unset($this->tables[$table][$key]);
+                    $this->tables[$table][$data['oai_identifier']] = array_replace($row, $data);
+
+                    return 1;
+                }
+            }
+            throw new RuntimeException('Missing source record.');
+        }
         if ($table === 'museumplus_import_state' && $this->failCheckpoint) {
             throw new RuntimeException('Simulated checkpoint failure');
         }
@@ -170,9 +181,14 @@ final class MemoryImportConnection extends Connection
         return 1;
     }
 
-    public function quoteSingleIdentifier(string $identifier): string
+    private function assertUniquePriref(string $table, array $data, ?string $ignoreKey = null): void
     {
-        return '`'.$identifier.'`';
+        if (!isset($data['axiell_priref'])) return;
+        foreach ($this->tables[$table] as $key => $row) {
+            if ((string) $key !== $ignoreKey && ($row['axiell_priref'] ?? null) === $data['axiell_priref']) {
+                throw new RuntimeException('Duplicate Axiell priref.');
+            }
+        }
     }
 
     public function executeStatement(string $sql, array $params = [], array $types = []): int|string
@@ -249,14 +265,6 @@ final class MemoryImportConnection extends Connection
             }
 
             return 0;
-        }
-
-        if (preg_match('/^INSERT INTO `records` \(([^)]+)\).*ON DUPLICATE KEY UPDATE/', $sql, $match)) {
-            $columns = array_map(static fn (string $column): string => trim($column, '` '), explode(',', $match[1]));
-            $data = array_combine($columns, $params);
-            $this->tables['records'][$data['oai_identifier']] = $data;
-
-            return 1;
         }
 
         throw new RuntimeException('Unexpected SQL: '.$sql);

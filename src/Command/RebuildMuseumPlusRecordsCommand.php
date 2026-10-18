@@ -6,6 +6,7 @@ namespace App\Command;
 
 use App\Import\MuseumPlusImportState;
 use App\Import\MuseumPlusRecordBuilder;
+use App\Import\RawResponseArchive;
 use App\Mapping\MuseumPlusExportParser;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -21,27 +22,16 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 #[AsCommand(
     name: 'app:rebuild-museumplus-records',
-    description: 'Rebuild Musea Brugge, Mu.ZEE and MSK Gent records from saved MuseumPlus source XML without fetching.',
+    description: 'Rebuild mapping profiles and publication sets from saved MuseumPlus source XML without fetching.',
 )]
 final class RebuildMuseumPlusRecordsCommand extends Command
 {
-    // Select by source institution, not the old set_spec or converted oai_xml.
+    // Read every saved Object: both old aliases and the revised *Txt export.
+    // PublicationSelector decides membership from parsed source, not stored output.
     private const SOURCE_BATCH_SQL = <<<'SQL'
-        SELECT id, museumplus_id, museumplus_xml
-        FROM records_import
+        SELECT id, museumplus_id, museumplus_xml, raw_response_id
+        FROM %s
         WHERE id > ?
-          AND museumplus_xml LIKE '%<Naam_bewaarinstelling>%'
-          AND TRIM(REGEXP_REPLACE(
-              REPLACE(REPLACE(
-                  SUBSTRING_INDEX(
-                      SUBSTRING_INDEX(museumplus_xml, '</Naam_bewaarinstelling>', 1),
-                      '<Naam_bewaarinstelling>', -1
-                  ), '&lt;', '<'), '&gt;', '>'),
-              '<[^>]*>', ''
-          )) IN (
-              'Musea Brugge', 'Musea Brugge - Groeningemuseum',
-              'Mu.ZEE, Kunstmuseum aan zee', 'Museum voor Schone Kunsten Gent'
-          )
         ORDER BY id
         LIMIT 100
         SQL;
@@ -54,13 +44,15 @@ final class RebuildMuseumPlusRecordsCommand extends Command
         private readonly string $identifierPrefix,
         #[Autowire('%env(MUSEUMPLUS_DEFAULT_SET_SPEC)%')]
         private readonly string $defaultSetSpec,
+        private readonly RawResponseArchive $rawArchive = new RawResponseArchive(),
     ) {
         parent::__construct();
     }
 
     protected function configure(): void
     {
-        $this->addOption('replace', null, InputOption::VALUE_NONE, 'Replace ALL current records atomically with the rebuilt museum selection. Keep records_import and the checkpoint.');
+        $this->addOption('replace', null, InputOption::VALUE_NONE, 'Replace ALL current records atomically with rebuilt source records and publication profiles. Keep records_import and the checkpoint.');
+        $this->addOption('source-table', null, InputOption::VALUE_REQUIRED, 'Saved source table: records, or records_import for explicit recovery of staging data.', 'records');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -70,34 +62,52 @@ final class RebuildMuseumPlusRecordsCommand extends Command
         $progress->lock();
 
         try {
+            $sourceTable = $input->getOption('source-table');
+            if (!in_array($sourceTable, ['records', 'records_import'], true)) throw new RuntimeException('source-table must be records or records_import.');
             if (trim($this->identifierPrefix) === '' || trim($this->defaultSetSpec) === '') {
                 throw new RuntimeException('The OAI identifier prefix and default set must not be empty.');
             }
 
             $io->title('Rebuild from saved MuseumPlus source XML');
-            $io->note('No MuseumPlus requests. Uses the current parser and mapping on previously fetched source XML.');
+            $io->note('No MuseumPlus requests. Uses verified raw response files where linked; older records use their saved Object XML.');
             $date = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-            $summary = $this->connection->transactional(function () use ($input, $io, $date): array {
+            $summary = $this->connection->transactional(function () use ($input, $io, $date, $sourceTable): array {
                 if ((int) $this->connection->fetchOne('SELECT COUNT(*) FROM records') > 0 && !$input->getOption('replace')) {
-                    throw new RuntimeException('records is not empty. Use --replace only to rebuild the entire test selection from scratch.');
+                    throw new RuntimeException('records is not empty. Use --replace to rebuild all saved source records and publication profiles.');
                 }
 
-                if ($input->getOption('replace')) {
+                if ($input->getOption('replace') && $sourceTable !== 'records') {
                     // DELETE is transactional; TRUNCATE would commit the deletion immediately.
                     $this->connection->executeStatement('DELETE FROM records');
                 }
 
                 $lastId = 0;
                 $stored = 0;
+                $published = 0;
                 $invalidFragments = 0;
                 $repairedFragments = 0;
                 $mappingWarnings = 0;
                 $sets = [];
-                while (($rows = $this->connection->fetchAllAssociative(self::SOURCE_BATCH_SQL, [$lastId])) !== []) {
+                $cachedRawId = null;
+                $rawRecords = [];
+                while (($rows = $this->connection->fetchAllAssociative(sprintf(self::SOURCE_BATCH_SQL, $sourceTable), [$lastId])) !== []) {
                     foreach ($rows as $row) {
                         try {
-                            // Stored source XML contains one Object, without the export's ObjectList wrapper.
-                            $parsed = $this->parser->parse('<ObjectList>'.$row['museumplus_xml'].'</ObjectList>');
+                            $rawId = $row['raw_response_id'] ?? null;
+                            if ($rawId !== null) {
+                                if ($rawId !== $cachedRawId) {
+                                    $rawRecords = [];
+                                    foreach ($this->parser->parse($this->rawArchive->read($rawId), $rawId) as $sourceRecord) {
+                                        if (isset($rawRecords[$sourceRecord->museumplusId])) throw new RuntimeException('Duplicate MuseumPlus ID in raw response.');
+                                        $rawRecords[$sourceRecord->museumplusId] = $sourceRecord;
+                                    }
+                                    $cachedRawId = $rawId;
+                                }
+                                $parsed = isset($rawRecords[$row['museumplus_id']]) ? [$rawRecords[$row['museumplus_id']]] : [];
+                            } else {
+                                // Legacy imports have no byte-exact archive; preserve their source.
+                                $parsed = $this->parser->parse('<ObjectList>'.$row['museumplus_xml'].'</ObjectList>');
+                            }
                             if (count($parsed) !== 1 || $parsed[0]->museumplusId === '' || $parsed[0]->museumplusId !== (string) $row['museumplus_id']) {
                                 throw new RuntimeException('Source XML must contain exactly one matching MuseumPlus ID.');
                             }
@@ -117,27 +127,38 @@ final class RebuildMuseumPlusRecordsCommand extends Command
                                 ++$mappingWarnings;
                             });
                             $data['museumplus_xml'] = $row['museumplus_xml'];
-                            $this->connection->insert('records', $data);
+                            if ($sourceTable === 'records') {
+                                $this->connection->update('records', $data, ['id' => $row['id']]);
+                            } else {
+                                $this->connection->insert('records', $data);
+                            }
                         } catch (\Throwable $error) {
                             throw new RuntimeException(sprintf('Failed rebuilding MuseumPlus %s (staging row %s): %s', $row['museumplus_id'], $row['id'], $error->getMessage()), 0, $error);
                         }
 
                         $lastId = (int) $row['id'];
                         ++$stored;
-                        $sets[$data['set_spec']] = ($sets[$data['set_spec']] ?? 0) + 1;
+                        $isPublished = false;
+                        foreach (\App\Entity\Record::PUBLICATION_COLUMNS as $set => $column) {
+                            if ($data[$column]) {
+                                $sets[$set] = ($sets[$set] ?? 0) + 1;
+                                $isPublished = true;
+                            }
+                        }
+                        $published += (int) $isPublished;
                     }
 
                     $io->writeln(sprintf('Rebuilt %d records; not committed yet.', $stored));
                 }
 
-                if ($stored === 0) {
-                    throw new RuntimeException('No matching museum records found in records_import. No changes were committed.');
+                if ($published === 0) {
+                    throw new RuntimeException('No publishable records found in '.$sourceTable.'. Check museum assignments in config/museum-groups.php. No changes were committed.');
                 }
 
-                return compact('stored', 'invalidFragments', 'repairedFragments', 'mappingWarnings', 'sets');
+                return compact('stored', 'published', 'invalidFragments', 'repairedFragments', 'mappingWarnings', 'sets');
             });
 
-            $io->success(sprintf('Rebuilt and published %d records. records_import and its checkpoint were not changed.', $summary['stored']));
+            $io->success(sprintf('Rebuilt %d records; %d belong to a publication set. records_import and its checkpoint were not changed.', $summary['stored'], $summary['published']));
             $io->table(['Set', 'Records'], array_map(static fn (string $set, int $count): array => [$set, $count], array_keys($summary['sets']), array_values($summary['sets'])));
             if ($summary['repairedFragments'] > 0) {
                 $io->note(sprintf('%d field fragments had text escaping repaired; their content was retained.', $summary['repairedFragments']));

@@ -104,7 +104,7 @@ final class XmlValueExtractor
         // These source leaves contain vocabulary text, including literal guide terms
         // such as <koper en koperlegering>. Do not repair arbitrary malformed tags.
         $fragment = preg_replace_callback(
-            '~<!\[CDATA\[.*?\]\]>|<!--.*?-->|<(object_category|object_name)>(\s*<[^<>]+>\s*)</\1>~su',
+            '~<!\[CDATA\[.*?\]\]>|<!--.*?-->|<(object_category|object_name|material)>(\s*<[^<>]+>\s*)</\1>~su',
             static function (array $match): string {
                 if (!isset($match[1])) {
                     return $match[0];
@@ -120,6 +120,28 @@ final class XmlValueExtractor
             $fragment,
         ) ?? $fragment;
 
+        // A literal comparison sign in known text leaves is text, not a broken XML tag.
+        $fragment = preg_replace_callback(
+            '~<!\[CDATA\[.*?\]\]>|<!--.*?-->|<(production\.notes|production\.date\.notes|production\.period\.notes|condition\.notes|exhibition|exhibition\.notes|title|title\.translation|title\.notes|inscription\.content|inscription\.notes|inscription\.description)>(.*?)</\1>~su',
+            static function (array $m): string {
+                if (!isset($m[1])) return $m[0];
+                // Exported angle-quote notation, including names such as <Grand'Gard>.
+                $quoted = preg_replace_callback(
+                    '~<!\[CDATA\[.*?\]\]>|<!--.*?-->|<<[^<>]*>>|<[\p{L}\p{N}.-]+\'[\p{L}\p{N}.-]+>~su',
+                    static fn (array $part): string => str_starts_with($part[0], '<!')
+                        ? $part[0] : str_replace(['<', '>'], ['&lt;', '&gt;'], $part[0]),
+                    $m[2],
+                );
+                $text = preg_replace_callback(
+                    '~<!\[CDATA\[.*?\]\]>|<!--.*?-->|</?[A-Za-z_](?:"[^"]*"|\'[^\']*\'|[^\'">])*>|<(?!/?[A-Za-z_]|!|\?)~su',
+                    static fn (array $part): string => $part[0] === '<' ? '&lt;' : $part[0],
+                    $quoted,
+                );
+                return '<'.$m[1].'>'.$text.'</'.$m[1].'>';
+            },
+            $fragment,
+        ) ?? $fragment;
+
         // Escape bare ampersands only in text. Preserve markup, attributes, CDATA,
         // comments and entity references; unknown entities must still fail parsing.
         $parts = preg_split('~(<!\[CDATA\[.*?\]\]>|<!--.*?-->|<(?:"[^"]*"|\'[^\']*\'|[^\'">])*>)~s', $fragment, -1, PREG_SPLIT_DELIM_CAPTURE);
@@ -128,7 +150,7 @@ final class XmlValueExtractor
         }
         foreach ($parts as $index => $part) {
             if ($index % 2 === 0) {
-                $parts[$index] = preg_replace('~&(?![^\s<>&;]*;)~u', '&amp;', $part) ?? $part;
+                $parts[$index] = preg_replace('~&(?![^\s<>&;]*;)|&(?=[^\s<>&;]*=)~u', '&amp;', $part) ?? $part;
             }
         }
 

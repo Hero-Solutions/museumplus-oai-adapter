@@ -23,7 +23,7 @@ function check(bool $condition, string $message): void
     }
 }
 
-function mapped(array $fields): array
+function mapped(array $fields, App\Axiell\AxiellProfile $profile = App\Axiell\AxiellProfile::Vkc): array
 {
     $source = '<Object><ID>test-1</ID>';
     foreach ($fields as $field => $fragment) {
@@ -31,7 +31,7 @@ function mapped(array $fields): array
     }
     $source .= '</Object>';
     $parsed = (new MuseumPlusExportParser(new XmlValueExtractor()))->parse('<ObjectList>'.$source.'</ObjectList>')[0];
-    $mapped = (new AxiellRecordMapper(new CreatorNormalizer(), new DimensionNormalizer(), new LabelNormalizer()))->map($parsed->values);
+    $mapped = (new AxiellRecordMapper(new CreatorNormalizer(), new DimensionNormalizer(), new LabelNormalizer()))->map($parsed->values, $profile);
     $renderer = new AxiellXmlRenderer(new Environment(new FilesystemLoader(dirname(__DIR__).'/templates')));
     $doc = new DOMDocument();
     check($doc->loadXML($renderer->renderRecord($mapped), LIBXML_NONET), 'Malformed output.');
@@ -158,7 +158,7 @@ check($x->evaluate('count(/record/Object_name/object_name/notes | /record/object
 check($x->evaluate('string(/record/content.motif.specific/broader_term)') === 'dieren', 'Specific motif wrapper not mapped.');
 check($x->evaluate('string(/record/acquisition.method)') === 'schenking' && $x->evaluate('string(/record/acquisition.date)') === '2020', 'Acquisition root fields absent.');
 check($x->evaluate('string(/record/current_owner)') === 'Stad', 'Current owner lost.');
-[$x] = mapped($common + ['Naam_bewaarinstelling' => '<institution.name>Museum voor Schone Kunsten Gent</institution.name>']);
+[$x] = mapped($common + ['Naam_bewaarinstelling' => '<institution.name>Museum voor Schone Kunsten Gent</institution.name>'], App\Axiell\AxiellProfile::Msk);
 check($x->evaluate('count(/record/collection/term)') === 2.0, 'MSK collection shape wrong.');
 check($x->evaluate('string(/record/Technique/technique/term)') === 'etsen', 'MSK technique shape wrong.');
 check($x->evaluate('string(/record/Acquisition_source/acquisition.source/name)') === 'Test schenker', 'MSK acquisition source shape wrong.');

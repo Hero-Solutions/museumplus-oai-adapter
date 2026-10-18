@@ -23,6 +23,9 @@ use Twig\Loader\FilesystemLoader;
 
 require dirname(__DIR__).'/vendor/autoload.php';
 require __DIR__.'/Support/MemoryImportConnection.php';
+require __DIR__.'/Support/TemporaryRawArchive.php';
+
+$testArchive = App\Tests\Support\temporaryRawArchive();
 
 $_ENV = [
     'MUSEUMPLUS_EXPORT_URL' => 'https://museumplus.invalid/export',
@@ -60,8 +63,9 @@ function database(): MemoryImportConnection
 }
 
 /** A fresh command and HTTP client simulate a new process using the saved database. */
-function runImport(MemoryImportConnection $db, callable $factory, array $options = [], ?string $expectedError = null): array
+function runImport(MemoryImportConnection $db, callable $factory, array $options = [], ?string $expectedError = null, ?App\Import\RawResponseArchive $archive = null): array
 {
+    global $testArchive;
     $requests = [];
     $client = new MockHttpClient(static function (string $method, string $url, array $options) use (&$requests, $factory): MockResponse {
         check($url === 'https://museumplus.invalid/export' && $method === 'POST', 'Only the fake export may be requested.');
@@ -80,6 +84,7 @@ function runImport(MemoryImportConnection $db, callable $factory, array $options
             new AxiellXmlRenderer(new Environment(new FilesystemLoader(dirname(__DIR__).'/templates'))),
         ),
         $db,
+        $archive ?? $testArchive,
     );
     $tester = new CommandTester($command);
     $error = null;
@@ -151,17 +156,21 @@ $saved = $db->tables;
 $_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'different-filter';
 runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
 $_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'test-value';
-runImport($db, noFetch(...), ['--resume' => true, '--start-offset' => '3'], 'Saved next offset is 2');
 runImport($db, static fn (): MockResponse => new MockResponse('<html><body>Offline</body></html>'), ['--resume' => true], 'Expected an ObjectList');
 runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList><Object>'), ['--resume' => true], 'Could not parse');
 check($db->tables === $saved, 'Bad configuration or invalid XML changed saved data.');
 unset($db->tables['records_import']['test:2']);
 runImport($db, noFetch(...), ['--resume' => true], 'does not match');
-fwrite(STDOUT, "PASS: changed filter, wrong offset, error pages, broken XML and mismatched staging are rejected\n");
+fwrite(STDOUT, "PASS: changed filter, error pages, broken XML and mismatched staging are rejected\n");
 
 $db = interruptedImport();
 $legacyHash = hash('sha256', json_encode(['https://museumplus.invalid/export', 'test.field', 'test-value', 'test:', 'test'], JSON_THROW_ON_ERROR));
-check($db->tables['museumplus_import_state'][1]['source_hash'] === $legacyHash, 'An empty organisation filter invalidated an existing checkpoint.');
+check($db->tables['museumplus_import_state'][1]['source_hash'] !== $legacyHash, 'Old mapping checkpoint was accepted by the new profiles.');
+$newState = $db->tables;
+$db->tables['museumplus_import_state'][1]['source_hash'] = $legacyHash;
+runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
+check($db->tables['museumplus_import_state'][1]['source_hash'] === $legacyHash, 'Refusal modified the old checkpoint.');
+$db->tables = $newState;
 $saved = $db->tables;
 $_ENV['MUSEUMPLUS_ORG_UNITS'] = 'org_1_TestMuseum,org_2_OtherMuseum';
 runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
@@ -184,7 +193,7 @@ $requests = runImport($db, static function (int $offset, int $limit, string $bod
 }, ['--resume' => true]);
 check($requests === [[2, 1000]], 'Reordering or repeating organisation codes prevented a safe resume.');
 $_ENV['MUSEUMPLUS_ORG_UNITS'] = '';
-fwrite(STDOUT, "PASS: organisation filters reach the export; selection changes block resume, formatting changes preserve it\n");
+fwrite(STDOUT, "PASS: old mapping checkpoints refused; organisation filters reach the export; selection changes block resume, formatting changes preserve it\n");
 
 $db = database();
 $newExport = file_get_contents(__DIR__.'/fixtures/museumplus-priref.xml');
@@ -201,7 +210,7 @@ foreach ([
 ] as $object => $message) {
     $db = interruptedImport();
     $saved = $db->tables;
-    $requests = runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList>'.$object.'</ObjectList>'), ['--resume' => true, '--allow-empty-swap' => true], $message);
+    $requests = runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList>'.$object.'</ObjectList>'), ['--resume' => true], $message);
     check($requests === [[2, 1000]] && $db->tables === $saved && !$db->locked && $db->renames === 0, 'An identity format error advanced, retried, skipped, published or changed stored data.');
 }
 fwrite(STDOUT, "PASS: identity format failures leave the checkpoint and both record tables unchanged\n");
@@ -239,11 +248,9 @@ $db->tables['museumplus_import_state'] = [];
 $saved = $db->tables;
 runImport($db, noFetch(...), [], 'already contains data');
 runImport($db, noFetch(...), ['--resume' => true], 'No saved checkpoint');
-runImport($db, noFetch(...), ['--resume' => true, '--start-offset' => '1'], 'No saved checkpoint');
 check($db->tables === $saved, 'Legacy staging data was discarded.');
-$requests = runImport($db, static fn (): MockResponse => batch(['3']), ['--resume' => true, '--start-offset' => '309000']);
-check($requests === [[309000, 1000]] && count($db->tables['records']) === 3, 'Legacy recovery lost data or used the wrong offset.');
-fwrite(STDOUT, "PASS: legacy staging is preserved and adopted at the supplied failed offset\n");
+check($db->tables === $saved, 'Unversioned legacy staging was changed.');
+fwrite(STDOUT, "PASS: unversioned legacy staging preserved and refused before any request\n");
 
 $db = interruptedImport();
 $scans = $db->importScans;
@@ -282,7 +289,7 @@ foreach (['before', 'after', 'checkpoint'] as $failurePoint) {
     check($db->tables['museumplus_import_state'][1]['status'] === 'resetting' && $db->tables['records'] === $published && !$db->locked, 'An interrupted reset left a usable checkpoint or changed published records.');
 
     $saved = $db->tables;
-    foreach ([[], ['--resume' => true], ['--resume' => true, '--start-offset' => '2'], ['--resume' => true, '--allow-empty-swap' => true]] as $options) {
+    foreach ([[], ['--resume' => true]] as $options) {
         runImport($db, noFetch(...), $options, 'Run again with --restart');
         check($db->tables === $saved && $db->renames === 0, 'An interrupted reset resumed or published an incomplete import.');
     }
@@ -304,8 +311,8 @@ fwrite(STDOUT, "PASS: skipped records advance the offset and an empty final page
 $db = database();
 runImport($db, static fn (): MockResponse => batch([]), [], 'zero records');
 check(array_keys($db->tables['records']) === ['test:old'], 'Empty import replaced published records.');
-runImport($db, noFetch(...), ['--resume' => true, '--allow-empty-swap' => true]);
-check($db->tables['records'] === [], 'Explicit empty swap did not work.');
+runImport($db, noFetch(...), ['--resume' => true], 'zero records');
+check(array_keys($db->tables['records']) === ['test:old'], 'Empty import replaced published records.');
 fwrite(STDOUT, "PASS: empty import protection remains effective on resume\n");
 
 foreach (['before', 'after'] as $failurePoint) {
@@ -322,64 +329,10 @@ foreach (['before', 'after'] as $failurePoint) {
 fwrite(STDOUT, "PASS: interruption before or after publication cannot swap records back\n");
 
 $db = interruptedImport();
-$staging = $db->tables['records_import'];
-$state = $db->tables['museumplus_import_state'];
-runImport($db, static fn (): MockResponse => batch(['sample']), ['--max-records' => '1']);
-check(isset($db->tables['records']['test:sample']) && $db->tables['records_import'] === $staging && $db->tables['museumplus_import_state'] === $state, 'Partial import modified the full import checkpoint.');
-foreach ([['--resume' => true, '--max-records' => '1'], ['--resume' => true, '--restart' => true], ['--restart' => true, '--start-offset' => '1']] as $options) {
-    runImport($db, noFetch(...), $options, 'cannot');
-}
+runImport($db, noFetch(...), ['--resume' => true, '--restart' => true], 'cannot');
 $db->locked = true;
 runImport($db, noFetch(...), ['--resume' => true], 'already running');
-fwrite(STDOUT, "PASS: partial imports, incompatible options and concurrent import protection\n");
-
-$db = interruptedImport();
-$db->tables['museumplus_import_state'][1]['next_offset'] = 394807;
-$db->tables['museumplus_import_state'][1]['skipped'] = 394805;
-$requests = runImport($db, static fn (int $offset): MockResponse => $offset === 394808 ? batch(['next-object']) : batch([]), [
-    '--resume' => true, '--skip-offset' => '394807', '--batch-size' => '1',
-]);
-check($requests === [[394808, 1], [394809, 1]], 'Explicit skip did not fetch exactly the following source position.');
-check(array_keys($db->tables['records']) === ['test:1', 'test:2', 'test:next-object'], 'Skip lost previous records or the next object.');
-check($db->tables['museumplus_import_state'][1]['skipped'] === 394806, 'Exactly one skipped record must be counted.');
-runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '394807'], 'no longer fetching');
-fwrite(STDOUT, "PASS: explicit skip of 394807 preserves earlier records and imports 394808\n");
-
-$db = interruptedImport();
-$staging = $db->tables['records_import'];
-runImport($db, static fn (): MockResponse => new MockResponse('Unauthorized', ['http_code' => 401]), [
-    '--resume' => true, '--skip-offset' => '2', '--batch-size' => '1',
-], 'HTTP 401');
-check($db->tables['museumplus_import_state'][1]['next_offset'] === 3 && $db->tables['museumplus_import_state'][1]['skipped'] === 1, 'Skip was lost when the following request failed.');
-check($db->tables['records_import'] === $staging && array_keys($db->tables['records']) === ['test:old'], 'Skipping changed stored records.');
-$saved = $db->tables;
-runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '2'], 'Saved next offset is 3');
-check($db->tables === $saved, 'Reusing the skip command skipped another object.');
-check(runImport($db, static fn (): MockResponse => batch(['3']), ['--resume' => true]) === [[3, 1000]], 'Normal resume did not retain the deliberate skip.');
-fwrite(STDOUT, "PASS: skip persists across another failure and cannot accidentally be applied twice\n");
-
-$db = interruptedImport();
-$saved = $db->tables;
-runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '5'], 'Saved next offset is 2');
-foreach ([['--skip-offset' => '2'], ['--resume' => true, '--skip-offset' => '2', '--start-offset' => '2']] as $options) {
-    runImport($db, noFetch(...), $options, 'requires --resume');
-}
-runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '-1'], 'non-negative');
-check($db->tables === $saved, 'Rejected skip changed the checkpoint.');
-$db->failCheckpoint = true;
-runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '2'], 'checkpoint failure');
-check($db->tables === $saved && !$db->locked, 'A failed skip checkpoint was not rolled back.');
-$db->failCheckpoint = false;
-$db->tables['museumplus_import_state'][1]['status'] = 'ready';
-runImport($db, noFetch(...), ['--resume' => true, '--skip-offset' => '2'], 'no longer fetching');
-runImport(database(), noFetch(...), ['--resume' => true, '--skip-offset' => '0'], 'No saved checkpoint');
-fwrite(STDOUT, "PASS: wrong offset, invalid options, missing checkpoint and failed checkpoint writes cannot skip records\n");
-
-$db = database();
-runImport($db, static fn (): MockResponse => new MockResponse('Unauthorized', ['http_code' => 401]), [], 'HTTP 401');
-$requests = runImport($db, static fn (int $offset): MockResponse => $offset === 1 ? batch(['first-valid']) : batch([]), ['--resume' => true, '--skip-offset' => '0']);
-check($requests === [[1, 1], [2, 2]] && $db->tables['museumplus_import_state'][1]['skipped'] === 1, 'Explicit skip must probe the next position before growing again.');
-fwrite(STDOUT, "PASS: the very first offset can also be skipped explicitly\n");
+echo "PASS: incompatible options and concurrent import protection\n";
 
 function brokenObject(int $id): string
 {
@@ -522,17 +475,69 @@ check($requests === [[0, 5], [0, 2], [0, 1], [1, 1], [2, 2], [4, 4], [8, 5], [13
 check(count($db->tables['records']) === 15, 'Recovery to an odd batch size lost records.');
 fwrite(STDOUT, "PASS: gradual recovery is capped at the configured batch size, including odd sizes\n");
 
+// Retain the verified Axiell identity during a full import, in both output views.
+$known = '<Object><priref>26245498</priref>'
+    .'<MuseumTxt>&lt;institution.name>Museum voor Schone Kunsten Gent&lt;/institution.name></MuseumTxt>'
+    .'<NumberTxt>&lt;object_number>S-40&lt;/object_number></NumberTxt></Object>';
 $db = database();
-$requests = runImport($db, damagedExport(12, 0, 2), ['--batch-size' => '8', '--max-records' => '9']);
-check($requests === [[0, 8], [0, 4], [0, 2], [0, 1], [1, 1], [2, 1], [3, 2], [5, 4]], 'Recovery fetched beyond max-records or repeatedly halved through a broken streak.');
-check(count($db->tables['records']) === 8 && count($db->tables['museumplus_import_errors']) === 2, 'Partial recovery did not store seven valid positions and retain the existing record.');
-fwrite(STDOUT, "PASS: gradual recovery respects max-records after consecutive skips\n");
+runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList>'.$known.'</ObjectList>'));
+$row = $db->tables['records']['test:26245498'];
+check($row['axiell_priref'] === '310000001' && $row['publish_msk'] === 1 && $row['publish_vkc'] === 1, 'Full import lost the known identity or museum/VKC pair.');
+foreach (['oai_xml', 'oai_xml_native'] as $column) {
+    $xml = new DOMDocument(); $xml->loadXML($row[$column], LIBXML_NONET);
+    check($xml->getElementsByTagName('priref')->item(0)?->textContent === '310000001', 'Imported profile changed the Axiell priref.');
+}
+$db = database();
+runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList>'.$known.'<Object><priref>310000001</priref></Object></ObjectList>'), [], 'Duplicate Axiell priref');
+check(array_keys($db->tables['records']) === ['test:old'] && $db->tables['records_import'] === [] && $db->tables['museumplus_import_state'][1]['next_offset'] === 0, 'Axiell identity collision replaced records or advanced the checkpoint.');
+echo "PASS: full import retains known Axiell identities in both views; collisions roll back the batch\n";
+
+// The raw response is the byte-exact source; mapped Object XML is only a convenience copy.
+$db = database();
+$body = "<?xml version='1.0' encoding='UTF-8'?>\r\n<ObjectList>\r\n";
+foreach (['Musea Brugge','Museum voor Schone Kunsten Gent','Mu.ZEE, Kunstmuseum aan zee'] as $i=>$museum) {
+    $body .= '<Object><priref>'.(901 + $i).'</priref><MuseumTxt>&lt;institution.name>'.$museum.'&lt;/institution.name></MuseumTxt><TitleTxt_nl>&lt;Title>&lt;title>Één &amp; twee&lt;/title>&lt;/Title></TitleTxt_nl><Empty></Empty></Object>'."\r\n";
+}
+$body .= "</ObjectList>\r\n";
+$beforeFiles = glob($testArchive->directory().'/*.xml');
+runImport($db, static fn (): MockResponse => new MockResponse($body));
+$ids = [];
+foreach ([901,902,903] as $id) {
+    $row = $db->tables['records']['test:'.$id];
+    $ids[] = $row['raw_response_id'];
+    check($testArchive->read($row['raw_response_id']) === $body, 'Import did not retain exact raw bytes.');
+    check($row['publish_vkc'] === 1 && $row['oai_xml_native'] !== null, 'Raw capture lost a mapped view.');
+    check(str_contains($row['oai_xml'], 'Één &amp; twee'), 'Escaping repair did not reach mapped output.');
+}
+check(count(array_unique($ids)) === 1 && count(glob($testArchive->directory().'/*.xml')) === count($beforeFiles) + 1, 'The response must be archived once and shared by its records.');
+$metadata = json_decode(file_get_contents($testArchive->directory().'/'.$ids[0].'.json'), true, flags: JSON_THROW_ON_ERROR);
+check($metadata['offset'] === 0 && $metadata['limit'] === 1000, 'Capture lost request position.');
+
+// Mapping/database failure leaves the captured source available for diagnosis.
+$db = database(); $db->failInsertId = '1';
+$beforeFiles = glob($testArchive->directory().'/*.xml');
+runImport($db, static fn (): MockResponse => batch(['1']), [], 'record insert failure');
+$savedFiles = array_values(array_diff(glob($testArchive->directory().'/*.xml'), $beforeFiles));
+check(count($savedFiles) === 1 && $db->tables['records_import'] === [], 'Rollback removed the raw response or kept derived rows.');
+check($testArchive->read(pathinfo($savedFiles[0], PATHINFO_FILENAME)) === '<ObjectList><Object><ID>1</ID></Object></ObjectList>', 'Rollback changed raw bytes.');
+
+// Failing to write the metadata must stop before parsing/storage/checkpoint advancement.
+$archive = App\Tests\Support\temporaryRawArchive();
+$db = interruptedImport(); $before = $db->tables;
+runImport($db, static function () use ($archive): MockResponse {
+    $xml = glob($archive->directory().'/*.xml')[0];
+    file_put_contents(substr($xml, 0, -4).'.json', 'occupied');
+    return batch(['1']);
+}, ['--resume'=>true], 'Cannot save raw response metadata', $archive);
+check($db->tables === $before && !$db->locked, 'Archive failure modified records or left the lock held.');
+echo "PASS: one exact source per batch linked to all museum/VKC outputs; raw bytes survive rollback; archive failure blocks storage\n";
 
 $db = interruptedImport();
-$savedState = $db->tables['museumplus_import_state'];
-$savedStaging = $db->tables['records_import'];
-$requests = runImport($db, damagedExport(20, 11), ['--start-offset' => '10', '--max-records' => '3', '--batch-size' => '8']);
-check($requests === [[10, 3], [10, 1], [11, 1], [12, 1]], 'Partial import exceeded the source-position limit, retried invalid XML or skipped a valid record.');
-check(array_keys($db->tables['records']) === ['test:old', 'test:11', 'test:13'] && count($db->tables['museumplus_import_errors']) === 1, 'Partial import skip/store/log was incorrect.');
-check($db->tables['museumplus_import_state'] === $savedState && $db->tables['records_import'] === $savedStaging, 'Partial isolation modified the full import.');
-fwrite(STDOUT, "PASS: partial imports obey max-records even with auto-skips and preserve full import progress\n");
+$firstRaw = $db->tables['records_import']['test:1']['raw_response_id'];
+$original = $testArchive->read($firstRaw);
+runImport($db, static fn (): MockResponse => batch(['3']), ['--resume'=>true]);
+check($db->tables['records']['test:1']['raw_response_id'] === $firstRaw && $testArchive->read($firstRaw) === $original, 'Resume or publication changed the earlier raw source.');
+check($db->tables['records']['test:3']['raw_response_id'] !== $firstRaw, 'Resumed batch reused the earlier capture.');
+runImport($db, static fn (): MockResponse => batch(['4']), ['--restart'=>true]);
+check($testArchive->read($firstRaw) === $original, 'Restart deleted the preceding import archive.');
+echo "PASS: resume and publication retain raw links; restart preserves earlier archives\n";

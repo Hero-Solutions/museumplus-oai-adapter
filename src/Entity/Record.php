@@ -12,11 +12,84 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Entity(repositoryClass: RecordRepository::class)]
 #[ORM\Table(name: 'records')]
 #[ORM\UniqueConstraint(name: 'uniq_records_oai_identifier', columns: ['oai_identifier'])]
+#[ORM\UniqueConstraint(name: 'uniq_records_axiell_priref', columns: ['axiell_priref'])]
 #[ORM\Index(name: 'idx_records_datestamp_id', columns: ['datestamp', 'id'])]
 #[ORM\Index(name: 'idx_records_set_datestamp', columns: ['set_spec', 'datestamp'])]
 #[ORM\Index(name: 'idx_records_museumplus_id', columns: ['museumplus_id'])]
 final class Record
 {
+    public const PUBLICATION_FIELDS = ['mskObj' => 'publishMsk', 'musea_brugge' => 'publishBrugge', 'muzee' => 'publishMuzee', 'vkc' => 'publishVkc'];
+    public const PUBLICATION_COLUMNS = ['mskObj' => 'publish_msk', 'musea_brugge' => 'publish_brugge', 'muzee' => 'publish_muzee', 'vkc' => 'publish_vkc'];
+
+    #[ORM\Column(options: ['default' => false])]
+    private bool $publishMsk = false;
+
+    #[ORM\Column(options: ['default' => false])]
+    private bool $publishBrugge = false;
+
+    #[ORM\Column(options: ['default' => false])]
+    private bool $publishMuzee = false;
+
+    #[ORM\Column(options: ['default' => false])]
+    private bool $publishVkc = false;
+
+    #[ORM\Column(type: Types::TEXT, nullable: true, columnDefinition: 'LONGTEXT DEFAULT NULL')]
+    private ?string $oaiXmlNative = null;
+
+    #[ORM\Column(length: 64, nullable: true)]
+    private ?string $axiellPriref = null;
+
+    #[ORM\Column(length: 64, nullable: true)]
+    private ?string $rawResponseId = null;
+
+    public function getRawResponseId(): ?string
+    {
+        return $this->rawResponseId;
+    }
+
+    public function setRawResponseId(?string $id): self
+    {
+        $this->rawResponseId = $id;
+
+        return $this;
+    }
+
+    public function getAxiellPriref(): ?string
+    {
+        return $this->axiellPriref;
+    }
+
+    public function setAxiellPriref(?string $priref): self
+    {
+        $this->axiellPriref = $priref;
+
+        return $this;
+    }
+
+    public function getSetSpecs(): array
+    {
+        return array_keys(array_filter(self::PUBLICATION_FIELDS, fn (string $field): bool => $this->$field));
+    }
+
+    public function setPublicationSets(array $sets): self
+    {
+        foreach (self::PUBLICATION_FIELDS as $set => $field) $this->$field = in_array($set, $sets, true);
+
+        return $this;
+    }
+
+    public function getOaiXmlNative(): ?string
+    {
+        return $this->oaiXmlNative;
+    }
+
+    public function setOaiXmlNative(?string $xml): self
+    {
+        $this->oaiXmlNative = $xml;
+
+        return $this;
+    }
+
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]

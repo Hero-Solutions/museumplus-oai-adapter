@@ -10,6 +10,7 @@ final readonly class MuseumPlusParsedRecord
         public RecordValues $values,
         public string $museumplusXml,
         public string $museumplusId,
+        public ?string $rawResponseId = null,
     ) {
     }
 }

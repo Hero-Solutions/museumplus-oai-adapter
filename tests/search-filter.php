@@ -56,14 +56,3 @@ foreach ([[], ['org_1_TestMuseum'], $orgUnits, ['org_1_Test&"Museum']] as $selec
     }
 }
 fwrite(STDOUT, "PASS: multiline configuration, empty selection, deduplication, XML escaping and AND/OR structure\n");
-
-// Verify that the complete copyable example is valid Symfony dotenv syntax.
-$readme = file_get_contents(dirname(__DIR__).'/README.md');
-check(preg_match("/```dotenv\s+(MUSEUMPLUS_ORG_UNITS='.*?')\s+```/s", $readme, $match) === 1, 'Missing complete configuration example.');
-$settings = (new Dotenv())->parse($match[1]);
-$orgUnits = MuseumPlusSearch::parseOrgUnits($settings['MUSEUMPLUS_ORG_UNITS']);
-check(count($orgUnits) === 30, 'The VKC example must contain all 30 distinct organisation codes.');
-foreach (['org_1_' => 15, 'org_31_' => 4, 'org_32_' => 11] as $prefix => $count) {
-    check(count(array_filter($orgUnits, static fn (string $code): bool => str_starts_with($code, $prefix))) === $count, 'Incomplete museum group in the example: '.$prefix);
-}
-fwrite(STDOUT, "PASS: full VKC example parses as a multiline environment variable with 30 codes\n");

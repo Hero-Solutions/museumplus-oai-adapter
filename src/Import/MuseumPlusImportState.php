@@ -32,7 +32,7 @@ final class MuseumPlusImportState
     }
 
     /** @return array<string, int|string> */
-    public function prepare(string $sourceHash, bool $resume, bool $restart, int $startOffset): array
+    public function prepare(string $sourceHash, bool $resume, bool $restart): array
     {
         $state = $this->connection->fetchAssociative('SELECT * FROM '.self::TABLE.' WHERE id = 1');
 
@@ -49,10 +49,6 @@ final class MuseumPlusImportState
                 throw new RuntimeException('Import settings changed. Restore the original source/filter settings or explicitly use --restart.');
             }
 
-            if ($startOffset > 0 && $startOffset !== (int) $state['next_offset']) {
-                throw new RuntimeException(sprintf('Saved next offset is %d; omit --start-offset when resuming.', $state['next_offset']));
-            }
-
             if ($state['status'] !== 'completed' && (int) $this->connection->fetchOne('SELECT COUNT(*) FROM records_import') !== (int) $state['stored']) {
                 throw new RuntimeException('records_import does not match the saved checkpoint. Refusing to skip records or publish an incomplete import.');
             }
@@ -60,32 +56,25 @@ final class MuseumPlusImportState
             return $state;
         }
 
-        $stored = 0;
         $datestamp = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
 
         if ($resume) {
-            // Older runs have no checkpoint. The operator supplies the failed fetch offset.
-            $summary = $this->connection->fetchAssociative('SELECT COUNT(*) AS stored, MIN(datestamp) AS first_date, MAX(datestamp) AS last_date FROM records_import');
-            $stored = (int) $summary['stored'];
-            if ($startOffset === 0 || $stored === 0 || $stored > $startOffset || $summary['first_date'] !== $summary['last_date']) {
-                throw new RuntimeException('No saved checkpoint. Recover an existing records_import with --resume --start-offset=<failed fetch offset>; it must contain batches from one full import.');
-            }
-
-            $datestamp = $summary['first_date'];
+            // Without the checkpoint we cannot establish the mapping/profile version.
+            throw new RuntimeException('No saved checkpoint. The saved mapping version cannot be verified. Rebuild saved XML separately, or explicitly restart the import. records_import was preserved.');
         } elseif (!$restart && $state === false && (int) $this->connection->fetchOne('SELECT COUNT(*) FROM records_import') > 0) {
-            throw new RuntimeException('records_import already contains data without a checkpoint. Use --resume --start-offset=<failed fetch offset> to keep it, or --restart to discard it.');
+            throw new RuntimeException('records_import already contains data without a checkpoint. Rebuild saved XML separately, or explicitly use --restart to discard staging and fetch again.');
         }
 
         $newState = [
             'id' => 1,
             'source_hash' => $sourceHash,
-            'next_offset' => $resume ? $startOffset : 0,
+            'next_offset' => 0,
             'datestamp' => $datestamp,
-            'stored' => $resume ? $stored : 0,
-            'skipped' => $resume ? $startOffset - $stored : 0,
+            'stored' => 0,
+            'skipped' => 0,
             'invalid_fragments' => 0,
             'consecutive_invalid' => 0,
-            'status' => $resume ? 'fetching' : 'resetting',
+            'status' => 'resetting',
         ];
 
         // Commit the reset marker before TRUNCATE, which implicitly commits.
@@ -95,11 +84,9 @@ final class MuseumPlusImportState
             $this->connection->insert(self::TABLE, $newState);
         });
 
-        if (!$resume) {
-            $this->connection->executeStatement('TRUNCATE TABLE records_import');
-            $newState['status'] = 'fetching';
-            $this->connection->update(self::TABLE, ['status' => 'fetching'], ['id' => 1]);
-        }
+        $this->connection->executeStatement('TRUNCATE TABLE records_import');
+        $newState['status'] = 'fetching';
+        $this->connection->update(self::TABLE, ['status' => 'fetching'], ['id' => 1]);
 
         return $newState;
     }
@@ -122,34 +109,6 @@ final class MuseumPlusImportState
         $this->connection->update(self::TABLE, $state, ['id' => 1]);
 
         return $state;
-    }
-
-    /**
-     * @param array<string, int|string> $state
-     * @return array<string, int|string>
-     */
-    public function skipOffset(array $state, int $offset): array
-    {
-        if ($state['status'] !== 'fetching') {
-            throw new RuntimeException('Cannot skip an offset: this import is no longer fetching records.');
-        }
-
-        if ($offset !== (int) $state['next_offset']) {
-            throw new RuntimeException(sprintf('Saved next offset is %d; refusing to skip offset %d. If it was already skipped, resume without --skip-offset.', $state['next_offset'], $offset));
-        }
-
-        if ($offset === PHP_INT_MAX) {
-            throw new RuntimeException('Cannot advance beyond the maximum supported offset.');
-        }
-
-        // Commit before the next request, so a later failure cannot undo this
-        // deliberate skip. Reusing the old --skip-offset then fails the equality check.
-        return $this->connection->transactional(fn (): array => $this->advance(
-            $state,
-            1,
-            ['stored' => 0, 'skipped' => 1, 'invalidFragments' => 0],
-            false,
-        ));
     }
 
     /** Called inside the same transaction as the skip checkpoint. */

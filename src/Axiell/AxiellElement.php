@@ -13,6 +13,7 @@ final readonly class AxiellElement
         public string $name,
         public ?string $value = null,
         public array $children = [],
+        public array $attributes = [],
     ) {
     }
 

@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace App\Controller;
 
 use App\Entity\Record;
+use App\Axiell\AxiellProfile;
+use App\Oai\HarvestRepository;
 use App\Oai\OaiPmhException;
-use App\Repository\RecordRepository;
 use DateTimeImmutable;
 use DateTimeZone;
 use DOMDocument;
@@ -28,7 +29,7 @@ final class OaiPmhController
     private const PAGE_SIZE = 100;
 
     public function __construct(
-        private readonly RecordRepository $records,
+        private readonly HarvestRepository $records,
     ) {
     }
 
@@ -50,6 +51,9 @@ final class OaiPmhController
                 default => throw new OaiPmhException('badVerb', 'Missing or unsupported OAI-PMH verb.'),
             };
         } catch (OaiPmhException $exception) {
+            foreach (iterator_to_array($document->documentElement->childNodes) as $child) {
+                if ($child instanceof DOMElement && !in_array($child->localName, ['responseDate', 'request'], true)) $document->documentElement->removeChild($child);
+            }
             $this->appendError($document, $exception->getOaiCode(), $exception->getMessage());
         }
 
@@ -76,9 +80,7 @@ final class OaiPmhController
     {
         $identifier = $this->parameter($request, 'identifier');
 
-        if ($identifier !== null && $this->records->findOneByOaiIdentifier($identifier) === null) {
-            throw new OaiPmhException('idDoesNotExist', 'No record exists for the given identifier.');
-        }
+        if ($identifier !== null) $this->resolveIdentifier($identifier);
 
         $formats = $this->appendElement($document->documentElement, 'ListMetadataFormats');
         $format = $this->appendElement($formats, 'metadataFormat');
@@ -106,99 +108,95 @@ final class OaiPmhController
 
     private function appendGetRecord(DOMDocument $document, Request $request): void
     {
-        $metadataPrefix = $this->requiredParameter($request, 'metadataPrefix');
-        $identifier = $this->requiredParameter($request, 'identifier');
-        $this->assertSupportedMetadataPrefix($metadataPrefix);
-
-        $record = $this->records->findOneByOaiIdentifier($identifier);
-
-        if ($record === null) {
-            throw new OaiPmhException('idDoesNotExist', 'No record exists for the given identifier.');
-        }
-
+        $this->assertSupportedMetadataPrefix($this->requiredParameter($request, 'metadataPrefix'));
+        [$record, $profile] = $this->resolveIdentifier($this->requiredParameter($request, 'identifier'));
         $getRecord = $this->appendElement($document->documentElement, 'GetRecord');
-        $this->appendRecord($getRecord, $record, true);
+        $this->appendRecord($getRecord, $record, $profile);
     }
 
+    /** Each set is a distinct OAI item, so GetRecord never depends on an absent set argument. */
     private function appendHarvest(DOMDocument $document, Request $request, bool $includeMetadata): void
     {
         $verb = $includeMetadata ? 'ListRecords' : 'ListIdentifiers';
         $state = $this->harvestState($request, $verb);
-        $total = $this->records->countForHarvest($state['from'], $state['until'], $state['set']);
-
-        if ($total === 0) {
-            throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
+        $set = $state['set'];
+        $counts = [];
+        foreach (AxiellProfile::cases() as $profile) {
+            if ($set !== null && $set !== $profile->value) continue;
+            $counts[$profile->value] = $this->records->countForHarvest($state['from'], $state['until'], $profile->value);
         }
-
+        $total = array_sum($counts);
+        if ($total === 0 || $state['offset'] >= $total) throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
         $list = $this->appendElement($document->documentElement, $verb);
-
-        if ($includeMetadata) {
-            $records = $this->records->findForHarvest($state['from'], $state['until'], $state['set'], self::PAGE_SIZE, $state['offset']);
-
-            if ($records === []) {
-                throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
+        $offset = $state['offset']; $pageCount = 0;
+        foreach ($counts as $set => $count) {
+            if ($offset >= $count) { $offset -= $count; continue; }
+            $profile = AxiellProfile::from($set);
+            $remaining = self::PAGE_SIZE - $pageCount;
+            if ($includeMetadata) {
+                $records = $this->records->findForHarvest($state['from'], $state['until'], $set, $remaining, $offset);
+                foreach ($records as $record) $this->appendRecord($list, $record, $profile);
+                $pageCount += count($records);
+            } else {
+                $headers = $this->records->findHeadersForHarvest($state['from'], $state['until'], $set, $remaining, $offset);
+                foreach ($headers as $header) $this->appendHeaderValues($list, $this->publicIdentifier($header['axiellPriref'], $profile), $header['datestamp'], [$set]);
+                $pageCount += count($headers);
             }
-
-            foreach ($records as $record) {
-                $this->appendRecord($list, $record, true);
-            }
-
-            $pageCount = count($records);
-        } else {
-            $headers = $this->records->findHeadersForHarvest($state['from'], $state['until'], $state['set'], self::PAGE_SIZE, $state['offset']);
-
-            if ($headers === []) {
-                throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
-            }
-
-            foreach ($headers as $header) {
-                $this->appendHeaderValues($list, $header['oaiIdentifier'], $header['datestamp'], $header['setSpec']);
-            }
-
-            $pageCount = count($headers);
+            $offset = 0;
+            if ($pageCount >= self::PAGE_SIZE) break;
         }
-
-        $nextOffset = $state['offset'] + $pageCount;
-
-        if ($nextOffset < $total) {
+        if ($pageCount === 0) throw new OaiPmhException('noRecordsMatch', 'No records match the request.');
+        if ($state['offset'] + $pageCount < $total) {
             $token = $this->appendText($list, 'resumptionToken', $this->encodeToken([
-                'verb' => $verb,
-                'metadataPrefix' => self::METADATA_PREFIX,
-                'from' => $state['fromRaw'],
-                'until' => $state['untilRaw'],
-                'set' => $state['set'],
-                'offset' => $nextOffset,
+                'version'=>3, 'verb'=>$verb, 'metadataPrefix'=>$state['metadataPrefix'],
+                'from'=>$state['fromRaw'], 'until'=>$state['untilRaw'], 'set'=>$state['set'], 'offset'=>$state['offset']+$pageCount,
             ]));
-            $token->setAttribute('completeListSize', (string) $total);
-            $token->setAttribute('cursor', (string) $state['offset']);
+            $token->setAttribute('completeListSize', (string)$total);
+            $token->setAttribute('cursor', (string)$state['offset']);
         }
     }
 
-    private function appendRecord(DOMElement $parent, Record $record, bool $includeMetadata): void
+    private function appendRecord(DOMElement $parent, Record $record, AxiellProfile $profile): void
     {
-        $recordElement = $this->appendElement($parent, 'record');
-        $this->appendHeader($recordElement, $record);
+        if (!in_array($profile->value, $record->getSetSpecs(), true)) throw new OaiPmhException('cannotDisseminateFormat', 'This record is not published in the requested profile.');
+        $xml = $profile === AxiellProfile::Vkc ? $record->getOaiXml() : $record->getOaiXmlNative();
+        if ($xml === null) throw new OaiPmhException('cannotDisseminateFormat', 'The requested profile must first be rebuilt.');
+        $element = $this->appendElement($parent, 'record');
+        $this->appendHeaderValues($element, $this->publicIdentifier($record->getAxiellPriref(), $profile), $record->getDatestamp(), [$profile->value]);
+        $metadata = $this->appendElement($element, 'metadata');
+        $metadata->appendChild($this->loadPayload($metadata->ownerDocument, $xml));
+    }
 
-        if (!$includeMetadata) {
-            return;
+    /** @return array{Record, AxiellProfile} */
+    private function resolveIdentifier(string $identifier): array
+    {
+        foreach (AxiellProfile::cases() as $profile) {
+            $prefix = $profile->identifierPrefix().':';
+            if (str_starts_with($identifier, $prefix)) {
+                $record = $this->records->findOneByAxiellPriref(substr($identifier, strlen($prefix)));
+                if ($record !== null && in_array($profile->value, $record->getSetSpecs(), true)) return [$record, $profile];
+                break;
+            }
         }
 
-        $metadata = $this->appendElement($recordElement, 'metadata');
-        $payload = $this->loadPayload($metadata->ownerDocument, $record->getOaiXml());
-        $metadata->appendChild($payload);
+        throw new OaiPmhException('idDoesNotExist', 'No record exists for the given identifier.');
     }
 
-    private function appendHeader(DOMElement $parent, Record $record): void
+    private function publicIdentifier(?string $priref, AxiellProfile $profile): string
     {
-        $this->appendHeaderValues($parent, $record->getOaiIdentifier(), $record->getDatestamp(), $record->getSetSpec());
+        if ($priref === null || $priref === '') {
+            throw new OaiPmhException('cannotDisseminateFormat', 'The Axiell identifiers must first be rebuilt from saved source records.');
+        }
+
+        return $profile->identifier($priref);
     }
 
-    private function appendHeaderValues(DOMElement $parent, string $identifier, DateTimeImmutable $datestamp, string $setSpec): void
+    private function appendHeaderValues(DOMElement $parent, string $identifier, DateTimeImmutable $datestamp, array $setSpecs): void
     {
         $header = $this->appendElement($parent, 'header');
         $this->appendText($header, 'identifier', $identifier);
         $this->appendText($header, 'datestamp', $this->formatDatestamp($datestamp));
-        $this->appendText($header, 'setSpec', $setSpec);
+        foreach ($setSpecs as $setSpec) $this->appendText($header, 'setSpec', $setSpec);
     }
 
     /**
@@ -208,6 +206,7 @@ final class OaiPmhController
      *     fromRaw: string|null,
      *     untilRaw: string|null,
      *     set: string|null,
+     *     metadataPrefix: string,
      *     offset: int
      * }
      */
@@ -219,8 +218,13 @@ final class OaiPmhController
             $this->assertOnlyResumptionToken($request);
             $state = $this->decodeToken($resumptionToken);
 
-            if (($state['verb'] ?? null) !== $verb || ($state['metadataPrefix'] ?? null) !== self::METADATA_PREFIX) {
+            if (($state['version'] ?? null) !== 3 || ($state['verb'] ?? null) !== $verb || !is_string($state['metadataPrefix'] ?? null)) {
                 throw new OaiPmhException('badResumptionToken', 'Invalid resumption token.');
+            }
+            try {
+                $this->assertSupportedMetadataPrefix($state['metadataPrefix']);
+            } catch (OaiPmhException) {
+                throw new OaiPmhException('badResumptionToken', 'Invalid metadata profile in resumption token.');
             }
 
             $fromRaw = $this->tokenString($state, 'from');
@@ -232,6 +236,7 @@ final class OaiPmhController
                 'fromRaw' => $fromRaw,
                 'untilRaw' => $untilRaw,
                 'set' => $this->tokenString($state, 'set'),
+                'metadataPrefix' => $state['metadataPrefix'],
                 'offset' => $this->positiveOffset($state['offset'] ?? null),
             ];
         }
@@ -248,6 +253,7 @@ final class OaiPmhController
             'fromRaw' => $fromRaw,
             'untilRaw' => $untilRaw,
             'set' => $this->parameter($request, 'set'),
+            'metadataPrefix' => $metadataPrefix,
             'offset' => 0,
         ];
     }

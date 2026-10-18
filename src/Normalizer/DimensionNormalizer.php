@@ -11,6 +11,17 @@ final class DimensionNormalizer
         3 => ['hoogte', 'breedte', 'diepte'],
     ];
 
+    /** Recover only a complete, explicitly labelled h/b[/d] measurement, without extra context. */
+    public function fromExplicitFreeText(?string $text): array
+    {
+        if ($text === null || preg_match('/^\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)(?:\s*[x×]\s*(\d+(?:[.,]\d+)?))?\s*(mm|cm|m)\s*\(\s*h\s*[x×]\s*b\s*(?:[x×]\s*(d))?\s*\)\s*$/iu', $text, $m) !== 1) return [];
+        $depth = ($m[3] ?? '') !== '';
+        if ($depth !== (($m[5] ?? '') !== '')) return [];
+        $result = [];
+        foreach (self::TYPES_BY_COUNT[$depth ? 3 : 2] as $index => $type) $result[] = ['type'=>$type, 'value'=>str_replace(',', '.', $m[$index+1]), 'unit'=>strtolower($m[4])];
+        return $result;
+    }
+
     /**
      * @param list<string> $values
      * @param list<string> $units

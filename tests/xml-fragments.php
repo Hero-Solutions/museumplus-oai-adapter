@@ -36,6 +36,15 @@ $cases = [
     ['<description note="&amp;">Alpha & Beta</description>', 'description', ['Alpha & Beta'], true],
     ['<Object_category><object_category>koperplaat</object_category></Object_category><Object_category><object_category><koper en koperlegering></object_category></Object_category>', 'Object_category/object_category', ['koperplaat', '<koper en koperlegering>'], true],
     ['<Object_name><object_name><weeginstrumenten naar vorm></object_name></Object_name>', 'Object_name/object_name', ['<weeginstrumenten naar vorm>'], true],
+    ['<Material><material><koper en koperlegering></material></Material>', 'Material/material', ['<koper en koperlegering>'], true],
+    ['<production.notes>Hoogte < 10 en > 5</production.notes>', 'production.notes', ['Hoogte < 10 en > 5'], true],
+    ['<production.notes><![CDATA[< 10]]><em>tekst</em></production.notes>', 'production.notes', ['< 10tekst'], false],
+    ['<production.notes><![CDATA[< 10]]><!-- < 20 --> & tekst</production.notes>', 'production.notes', ['< 10 & tekst'], true],
+    ['<title>Set <<Pak-Me-Mee>></title>', 'title', ['Set <<Pak-Me-Mee>>'], true],
+    ["<title.translation>Le singe du <Grand'Gard></title.translation>", 'title.translation', ["Le singe du <Grand'Gard>"], true],
+    ['<creator.history>https://example.invalid/?one=x&two=y; geraadpleegd</creator.history>', 'creator.history', ['https://example.invalid/?one=x&two=y; geraadpleegd'], true],
+    ['<production.period.notes>< 1880</production.period.notes>', 'production.period.notes', ['< 1880'], true],
+    ['<inscription.description>--<>--</inscription.description>', 'inscription.description', ['--<>--'], true],
     ['<object_name>&lt;weeginstrumenten naar vorm&gt;</object_name>', 'object_name', ['<weeginstrumenten naar vorm>'], false],
     ['<description><em>Alpha</em> & Beta</description>', 'description', ['Alpha & Beta'], true],
 ];
@@ -51,6 +60,8 @@ foreach ([
     '<description>truncated & text',
     '<description>Alpha & Beta</wrong>',
     '<object_name><broken></object_name>',
+    '<production.notes><broken></production.notes>',
+    '<production.notes><em note="< 10">tekst</em> & tekst</production.notes>',
     '<object_name><broken attribute="x"></object_name>',
     '<object_name><broken attribute/></object_name>',
     '<object_name><broken attribute=value></object_name>',
@@ -97,6 +108,9 @@ check($document->loadXML($renderer->renderRecord($mapper->map($values))), 'Legac
 $xpath = new DOMXPath($document);
 check($xpath->evaluate('string(/record/object_category/term)') === 'schilderijen', 'Legacy category mapping broke.');
 check($xpath->evaluate('string(/record/production.period/term)') === '20ste eeuw', 'Legacy period mapping broke.');
+
+$plain = $parser->parse('<ObjectList><Object><priref>plain</priref><physical_description>rand met &lt;&gt; CUIVRE</physical_description></Object></ObjectList>')[0];
+check($plain->values->invalidFragments === [] && $plain->values->valuesByPath['Physical_description_NL'] === ['rand met <> CUIVRE'], 'Plain physical description treated as markup.');
 
 $rejected = false;
 try {

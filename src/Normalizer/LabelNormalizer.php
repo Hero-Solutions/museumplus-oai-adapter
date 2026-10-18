@@ -6,6 +6,17 @@ namespace App\Normalizer;
 
 final class LabelNormalizer
 {
+    public function titleLanguage(string $value): string
+    {
+        return match (mb_strtolower(trim($value), 'UTF-8')) {
+            'nl', 'nederlands', 'nederlandse titel' => 'Nederlands',
+            'fr', 'frans', 'franse titel', 'franstalige titel' => 'Frans',
+            'en', 'engels', 'engelse titel', 'engelstalige titel' => 'Engels',
+            'de', 'duits', 'duitse titel', 'duitstalige titel' => 'Duits',
+            default => trim($value),
+        };
+    }
+
     /** Only known public labels; never substitute internal locations or packaging notes. */
     public function publicLocation(string $value): ?string
     {

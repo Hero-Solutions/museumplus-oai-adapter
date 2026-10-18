@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Repository;
 
 use App\Entity\Record;
+use App\Oai\HarvestRepository;
 use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
@@ -14,21 +15,23 @@ use Doctrine\Persistence\ManagerRegistry;
 /**
  * @extends ServiceEntityRepository<Record>
  */
-final class RecordRepository extends ServiceEntityRepository
+final class RecordRepository extends ServiceEntityRepository implements HarvestRepository
 {
     public function __construct(ManagerRegistry $registry)
     {
         parent::__construct($registry, Record::class);
     }
 
-    public function findOneByOaiIdentifier(string $identifier): ?Record
+    public function findOneByAxiellPriref(string $priref): ?Record
     {
-        return $this->findOneBy(['oaiIdentifier' => $identifier]);
+        $record = $this->findOneBy(['axiellPriref' => $priref]);
+
+        return $record !== null && $record->getSetSpecs() !== [] ? $record : null;
     }
 
     public function findEarliestDatestamp(): ?DateTimeImmutable
     {
-        return $this->findOneBy([], ['datestamp' => 'ASC'])?->getDatestamp();
+        return ($this->findForHarvest(null, null, null, 1, 0)[0] ?? null)?->getDatestamp();
     }
 
     /**
@@ -36,13 +39,7 @@ final class RecordRepository extends ServiceEntityRepository
      */
     public function findSetSpecs(): array
     {
-        $rows = $this->createQueryBuilder('r')
-            ->select('DISTINCT r.setSpec AS setSpec')
-            ->orderBy('r.setSpec', 'ASC')
-            ->getQuery()
-            ->getScalarResult();
-
-        return array_values(array_map(static fn (array $row): string => (string) $row['setSpec'], $rows));
+        return array_values(array_filter(array_keys(Record::PUBLICATION_FIELDS), fn (string $set): bool => $this->countForHarvest(null, null, $set) > 0));
     }
 
     /**
@@ -65,7 +62,7 @@ final class RecordRepository extends ServiceEntityRepository
     }
 
     /**
-     * @return list<array{oaiIdentifier: string, datestamp: DateTimeImmutable, setSpec: string}>
+     * @return list<array{oaiIdentifier: string, axiellPriref: string|null, datestamp: DateTimeImmutable, setSpecs: list<string>}>
      */
     public function findHeadersForHarvest(
         ?DateTimeImmutable $from,
@@ -75,7 +72,7 @@ final class RecordRepository extends ServiceEntityRepository
         int $offset,
     ): array {
         $queryBuilder = $this->getEntityManager()->getConnection()->createQueryBuilder()
-            ->select('r.oai_identifier', 'r.datestamp', 'r.set_spec')
+            ->select('r.oai_identifier', 'r.axiell_priref', 'r.datestamp', ...array_map(static fn (string $field): string => 'r.'.$field, array_values(Record::PUBLICATION_COLUMNS)))
             ->from('records', 'r')
             ->orderBy('r.datestamp', 'ASC')
             ->addOrderBy('r.id', 'ASC')
@@ -94,19 +91,16 @@ final class RecordRepository extends ServiceEntityRepository
                 ->setParameter('until', $until->format('Y-m-d H:i:s'));
         }
 
-        if ($setSpec !== null) {
-            $queryBuilder
-                ->andWhere('r.set_spec = :setSpec')
-                ->setParameter('setSpec', $setSpec);
-        }
+        $queryBuilder->andWhere(self::publicationCondition($setSpec, Record::PUBLICATION_COLUMNS));
 
         $rows = $queryBuilder->fetchAllAssociative();
 
         return array_map(
             static fn (array $row): array => [
                 'oaiIdentifier' => (string) $row['oai_identifier'],
+                'axiellPriref' => $row['axiell_priref'],
                 'datestamp' => new DateTimeImmutable((string) $row['datestamp'], new DateTimeZone('UTC')),
-                'setSpec' => (string) $row['set_spec'],
+                'setSpecs' => array_keys(array_filter(Record::PUBLICATION_COLUMNS, static fn (string $column): bool => (bool) $row[$column])),
             ],
             $rows,
         );
@@ -136,12 +130,15 @@ final class RecordRepository extends ServiceEntityRepository
                 ->setParameter('until', $until);
         }
 
-        if ($setSpec !== null) {
-            $queryBuilder
-                ->andWhere('r.setSpec = :setSpec')
-                ->setParameter('setSpec', $setSpec);
-        }
+        $queryBuilder->andWhere(self::publicationCondition($setSpec, Record::PUBLICATION_FIELDS));
 
         return $queryBuilder;
+    }
+
+    private static function publicationCondition(?string $set, array $fields): string
+    {
+        if ($set !== null) return isset($fields[$set]) ? 'r.'.$fields[$set].' = 1' : '1 = 0';
+
+        return '('.implode(' OR ', array_map(static fn (string $field): string => 'r.'.$field.' = 1', array_values($fields))).')';
     }
 }

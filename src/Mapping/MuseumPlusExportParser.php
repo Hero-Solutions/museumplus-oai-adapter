@@ -65,7 +65,7 @@ final class MuseumPlusExportParser
     /**
      * @return list<MuseumPlusParsedRecord>
      */
-    public function parse(string $xml): array
+    public function parse(string $xml, ?string $rawResponseId = null): array
     {
         $document = $this->loadDocument($xml);
 
@@ -104,7 +104,8 @@ final class MuseumPlusExportParser
                 $sourceField = self::FIELD_ALIASES[$exportField] ?? $exportField;
                 $fragment = trim($child->textContent);
 
-                if ($fragment === '' || !str_contains($fragment, '<')) {
+                // This revised export column contains plain text, not an XML fragment.
+                if ($exportField === 'physical_description' || $fragment === '' || !str_contains($fragment, '<')) {
                     if ($fragment !== '') {
                         $valuesByPath[$sourceField][] = $fragment;
                     }
@@ -154,6 +155,7 @@ final class MuseumPlusExportParser
                 ),
                 museumplusXml: trim($document->saveXML($objectNode) ?: ''),
                 museumplusId: $museumplusId,
+                rawResponseId: $rawResponseId,
             );
         }
 

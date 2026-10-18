@@ -7,6 +7,7 @@ namespace App\Command;
 use App\Import\MuseumPlusImportState;
 use App\Import\MuseumPlusRecordBuilder;
 use App\Import\MuseumPlusSearch;
+use App\Import\RawResponseArchive;
 use App\Mapping\InvalidMuseumPlusResponse;
 use App\Mapping\MuseumPlusExportParser;
 use App\Mapping\MuseumPlusParsedRecord;
@@ -30,7 +31,6 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 final class ImportMuseumPlusRecordsCommand extends Command
 {
     private const IMPORT_TABLE = 'records_import';
-    private const LIVE_TABLE = 'records';
     private const MAX_FETCH_RETRIES = 3;
 
     public function __construct(
@@ -38,6 +38,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         private readonly MuseumPlusExportParser $parser,
         private readonly MuseumPlusRecordBuilder $recordBuilder,
         private readonly Connection $connection,
+        private readonly RawResponseArchive $rawArchive,
     ) {
         parent::__construct();
     }
@@ -46,12 +47,8 @@ final class ImportMuseumPlusRecordsCommand extends Command
     {
         $this
             ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'MuseumPlus fetch size.', '1000')
-            ->addOption('start-offset', null, InputOption::VALUE_REQUIRED, 'Without --resume: upsert directly into records. With --resume: recover a legacy full import without a checkpoint at this failed fetch offset.', '0')
-            ->addOption('max-records', null, InputOption::VALUE_REQUIRED, 'Fetch at most this many records and upsert them directly into records.')
             ->addOption('resume', null, InputOption::VALUE_NONE, 'Resume an existing full import; fail if none exists. Incomplete imports also resume automatically without this flag.')
-            ->addOption('skip-offset', null, InputOption::VALUE_REQUIRED, 'With --resume, explicitly skip exactly this saved next offset once, then continue with the following object.')
-            ->addOption('restart', null, InputOption::VALUE_NONE, 'Discard the saved full import and explicitly start over from zero.')
-            ->addOption('allow-empty-swap', null, InputOption::VALUE_NONE, 'Allow swapping an empty import table.');
+            ->addOption('restart', null, InputOption::VALUE_NONE, 'Discard staging progress and start over from zero; keep published records and raw files.');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -74,22 +71,11 @@ final class ImportMuseumPlusRecordsCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
         $batchSize = $this->positiveIntOption($input, 'batch-size');
-        $startOffset = $this->nonNegativeIntOption($input, 'start-offset');
-        $maxRecords = $this->nullablePositiveIntOption($input, 'max-records');
-        $allowEmptySwap = (bool) $input->getOption('allow-empty-swap');
         $resume = (bool) $input->getOption('resume');
         $restart = (bool) $input->getOption('restart');
-        $skipOffset = $input->getOption('skip-offset') === null ? null : $this->nonNegativeIntOption($input, 'skip-offset');
-
-        if (($resume && $restart) || ($maxRecords !== null && ($resume || $restart)) || ($restart && $startOffset > 0)) {
-            throw new RuntimeException('--resume and --restart cannot be combined with each other or --max-records; --restart also cannot use a nonzero --start-offset.');
+        if ($resume && $restart) {
+            throw new RuntimeException('--resume and --restart cannot be combined.');
         }
-
-        if ($skipOffset !== null && (!$resume || $startOffset !== 0)) {
-            throw new RuntimeException('--skip-offset requires --resume and cannot be combined with a nonzero --start-offset.');
-        }
-
-        $partialImport = !$resume && ($startOffset > 0 || $maxRecords !== null);
 
         $url = $this->env('MUSEUMPLUS_EXPORT_URL');
         $username = $this->env('MUSEUMPLUS_USERNAME');
@@ -100,55 +86,40 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $identifierPrefix = $this->env('MUSEUMPLUS_OAI_IDENTIFIER_PREFIX');
         $defaultSetSpec = $this->env('MUSEUMPLUS_DEFAULT_SET_SPEC');
         $timeout = $this->positiveIntEnv('MUSEUMPLUS_TIMEOUT_SECONDS');
-        $datestamp = new DateTimeImmutable('now', new DateTimeZone('UTC'));
 
         $io->title('MuseumPlus import');
 
-        $state = null;
-        $offset = $startOffset;
-        $fetched = 0;
-        $stored = 0;
-        $skipped = 0;
-        $invalidFragments = 0;
         $sourceSettings = [$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec];
-        // Preserve existing checkpoints when no organisation filter is configured.
+        // Never publish a mix of old conversions and new profiles after a resume.
+        $sourceSettings[] = $this->recordBuilder->mappingVersion();
         if ($orgUnits !== []) {
             $sourceSettings[] = $orgUnits;
         }
         $sourceHash = hash('sha256', json_encode($sourceSettings, JSON_THROW_ON_ERROR));
 
-        if (!$partialImport) {
-            if ($restart) {
-                $io->writeln('Clearing records_import with TRUNCATE before restarting. This can wait for existing database locks.');
-            }
-
-            $state = $progress->prepare($sourceHash, $resume, $restart, $startOffset);
-
-            if ($skipOffset !== null) {
-                $state = $progress->skipOffset($state, $skipOffset);
-                $io->warning(sprintf('Explicitly skipped offset %d. Saved next offset: %d.', $skipOffset, $state['next_offset']));
-            }
-
-            if ($state['status'] === 'completed') {
-                $io->success('This import has already been published. No records were fetched or swapped.');
-
-                return Command::SUCCESS;
-            }
-
-            $offset = $fetched = (int) $state['next_offset'];
-            $stored = (int) $state['stored'];
-            $skipped = (int) $state['skipped'];
-            $invalidFragments = (int) $state['invalid_fragments'];
-            $datestamp = new DateTimeImmutable($state['datestamp'], new DateTimeZone('UTC'));
-            $io->note(sprintf('Full import checkpoint: offset %d, %d records already stored. Re-run with --resume after an interruption.', $offset, $stored));
+        if ($restart) {
+            $io->writeln('Clearing records_import with TRUNCATE before restarting. This can wait for existing database locks.');
         }
+        $state = $progress->prepare($sourceHash, $resume, $restart);
+        if ($state['status'] === 'completed') {
+            $io->success('This import has already been published. No records were fetched or swapped.');
+
+            return Command::SUCCESS;
+        }
+        $offset = $fetched = (int) $state['next_offset'];
+        $stored = (int) $state['stored'];
+        $skipped = (int) $state['skipped'];
+        $invalidFragments = (int) $state['invalid_fragments'];
+        $datestamp = new DateTimeImmutable($state['datestamp'], new DateTimeZone('UTC'));
+        $io->note(sprintf('Full import checkpoint: offset %d, %d records already stored. Re-run with --resume after an interruption.', $offset, $stored));
 
         // Resume a run of invalid objects with a single request per position.
-        $currentBatchSize = $skipOffset !== null || (int) ($state['consecutive_invalid'] ?? 0) > 0 ? 1 : $batchSize;
+        $currentBatchSize = (int) ($state['consecutive_invalid'] ?? 0) > 0 ? 1 : $batchSize;
         $recoveryEnd = null;
+        $io->note('Original response bodies are archived in '.$this->rawArchive->directory().'.');
 
-        while (($state === null || $state['status'] === 'fetching') && ($maxRecords === null || $fetched < $maxRecords)) {
-            $limit = $maxRecords === null ? $currentBatchSize : min($currentBatchSize, $maxRecords - $fetched);
+        while ($state['status'] === 'fetching') {
+            $limit = $currentBatchSize;
             if ($recoveryEnd !== null) {
                 $limit = min($limit, $recoveryEnd - $offset);
             }
@@ -166,6 +137,8 @@ final class ImportMuseumPlusRecordsCommand extends Command
                     offset: $offset,
                     timeout: $timeout,
                     io: $io,
+                    sourceHash: $sourceHash,
+                    importDatestamp: $datestamp->format('Y-m-d H:i:s'),
                     orgUnits: $orgUnits,
                 );
             } catch (InvalidMuseumPlusResponse $error) {
@@ -196,15 +169,11 @@ final class ImportMuseumPlusRecordsCommand extends Command
                 throw new RuntimeException('MuseumPlus returned more records than requested. Refusing to advance the checkpoint.');
             }
 
-            if ($count === 0 && $partialImport) {
-                break;
-            }
-
-            [$stats, $state] = $this->connection->transactional(function () use ($records, $datestamp, $identifierPrefix, $defaultSetSpec, $partialImport, $progress, $state, $count, $limit, $invalidRecord, $sourceHash, $offset): array {
+            [$stats, $state] = $this->connection->transactional(function () use ($records, $datestamp, $identifierPrefix, $defaultSetSpec, $progress, $state, $count, $limit, $invalidRecord, $sourceHash, $offset): array {
                 if ($invalidRecord !== null) {
                     $progress->logInvalidRecord($sourceHash, $datestamp->format('Y-m-d H:i:s'), $offset, $invalidRecord);
                     $stats = ['stored' => 0, 'skipped' => 1, 'invalidFragments' => 0];
-                    $nextState = $state === null ? null : $progress->advance($state, 1, $stats, false, true);
+                    $nextState = $progress->advance($state, 1, $stats, false, true);
 
                     return [$stats, $nextState];
                 }
@@ -214,10 +183,8 @@ final class ImportMuseumPlusRecordsCommand extends Command
                     datestamp: $datestamp,
                     identifierPrefix: $identifierPrefix,
                     defaultSetSpec: $defaultSetSpec,
-                    table: $partialImport ? self::LIVE_TABLE : self::IMPORT_TABLE,
-                    upsert: $partialImport,
                 );
-                $nextState = $state === null ? null : $progress->advance($state, $count, $stats, $count < $limit);
+                $nextState = $progress->advance($state, $count, $stats, $count < $limit);
 
                 return [$stats, $nextState];
             });
@@ -258,19 +225,16 @@ final class ImportMuseumPlusRecordsCommand extends Command
             }
         }
 
-        if ($stored === 0 && !$partialImport && !$allowEmptySwap) {
+        if ($stored === 0) {
             throw new RuntimeException('Import returned zero records. Refusing table swap.');
         }
 
-        if (!$partialImport) {
-            $progress->publish();
-        }
+        $progress->publish();
 
         $io->success(sprintf(
-            'Processed %d source positions. Stored %d records%s. Skipped %d records (missing ID, invalid XML or explicitly skipped). Invalid fragments: %d.',
+            'Processed %d source positions. Published %d records. Skipped %d records (missing ID or invalid XML). Invalid fragments: %d.',
             $fetched,
             $stored,
-            $partialImport ? ' directly into records' : ' and published them to records',
             $skipped,
             $invalidFragments,
         ));
@@ -288,8 +252,6 @@ final class ImportMuseumPlusRecordsCommand extends Command
         DateTimeImmutable $datestamp,
         string $identifierPrefix,
         string $defaultSetSpec,
-        string $table,
-        bool $upsert,
     ): array {
         $stored = 0;
         $skipped = 0;
@@ -309,11 +271,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
                 $mappingWarnings[] = sprintf('MuseumPlus %s (%s), field %s: %s', $record->museumplusId, $record->values->objectNumber, $warning['field'], $warning['message']);
             });
 
-            if ($upsert) {
-                $this->upsert($table, $data, 'oai_identifier');
-            } else {
-                $this->connection->insert($table, $data);
-            }
+            $this->connection->insert(self::IMPORT_TABLE, $data);
 
             ++$stored;
         }
@@ -324,35 +282,6 @@ final class ImportMuseumPlusRecordsCommand extends Command
             'invalidFragments' => $invalidFragments,
             'mappingWarnings' => $mappingWarnings,
         ];
-    }
-
-    /**
-     * @param array<string, string|null> $data
-     */
-    private function upsert(string $table, array $data, string $uniqueColumn): void
-    {
-        $columns = array_keys($data);
-        $updateColumns = array_values(array_filter(
-            $columns,
-            static fn (string $column): bool => $column !== $uniqueColumn,
-        ));
-
-        $sql = sprintf(
-            'INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s',
-            $this->connection->quoteSingleIdentifier($table),
-            implode(', ', array_map($this->connection->quoteSingleIdentifier(...), $columns)),
-            implode(', ', array_fill(0, count($columns), '?')),
-            implode(', ', array_map(
-                fn (string $column): string => sprintf(
-                    '%s = VALUES(%s)',
-                    $this->connection->quoteSingleIdentifier($column),
-                    $this->connection->quoteSingleIdentifier($column),
-                ),
-                $updateColumns,
-            )),
-        );
-
-        $this->connection->executeStatement($sql, array_values($data));
     }
 
     /**
@@ -369,35 +298,38 @@ final class ImportMuseumPlusRecordsCommand extends Command
         int $offset,
         int $timeout,
         SymfonyStyle $io,
+        string $sourceHash,
+        string $importDatestamp,
         array $orgUnits = [],
     ): array {
         for ($attempt = 1; ; ++$attempt) {
-            $response = null;
             $exception = null;
 
             try {
-                $response = $this->httpClient->request('POST', $url, [
+                $entry = $this->rawArchive->capture($this->httpClient, $url, [
                     'auth_basic' => [$username, $password],
                     'headers' => [
                         'Accept' => 'application/octet-stream',
                         'Content-Type' => 'application/xml',
+                        'Accept-Encoding' => 'identity',
                     ],
                     'body' => MuseumPlusSearch::xml($searchFieldPath, $searchOperand, $limit, $offset, $orgUnits),
                     'timeout' => $timeout,
-                ]);
+                    'buffer' => false,
+                    'max_redirects' => 0,
+                ], ['source_hash'=>$sourceHash, 'import_datestamp'=>$importDatestamp, 'offset'=>$offset, 'limit'=>$limit]);
 
-                $statusCode = $response->getStatusCode();
+                $statusCode = $entry['http_status'];
 
-                if ($statusCode >= 400) {
-                    $response->cancel();
+                if ($statusCode !== 200) {
                     $failure = sprintf('MuseumPlus returned HTTP %d at offset %d', $statusCode, $offset);
 
                     if (!in_array($statusCode, [500, 502, 503, 504], true)) {
                         throw new RuntimeException($failure.'.');
                     }
                 } else {
-                    // Responses are lazy: a transport failure can occur while reading the body.
-                    $content = $response->getContent(false);
+                    // Parse only the saved, verified copy. Storage failures never advance progress.
+                    $content = $this->rawArchive->read($entry['id']);
 
                     if (trim($content) === '') {
                         throw new InvalidMuseumPlusResponse('MuseumPlus returned an empty response.');
@@ -405,13 +337,11 @@ final class ImportMuseumPlusRecordsCommand extends Command
 
                     // HTTP 200 can still contain truncated XML. Validate the entire
                     // batch before returning any records or advancing the checkpoint.
-                    return $this->parser->parse($content);
+                    return $this->parser->parse($content, $entry['id']);
                 }
             } catch (TransportExceptionInterface $exception) {
-                $response?->cancel();
                 $failure = sprintf('MuseumPlus transport failed at offset %d', $offset);
             } catch (InvalidMuseumPlusResponse $exception) {
-                $response?->cancel();
                 // Invalid XML is isolated or skipped by the import loop, without retries.
                 throw new InvalidMuseumPlusResponse(
                     sprintf('MuseumPlus returned an invalid response at offset %d: %s', $offset, $exception->getMessage()),
@@ -476,32 +406,6 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $value = $this->requiredOption($input, $name);
 
         if (!ctype_digit($value) || (int) $value < 1) {
-            throw new RuntimeException(sprintf('Option --%s must be a positive integer.', $name));
-        }
-
-        return (int) $value;
-    }
-
-    private function nonNegativeIntOption(InputInterface $input, string $name): int
-    {
-        $value = $this->requiredOption($input, $name);
-
-        if (!ctype_digit($value)) {
-            throw new RuntimeException(sprintf('Option --%s must be a non-negative integer.', $name));
-        }
-
-        return (int) $value;
-    }
-
-    private function nullablePositiveIntOption(InputInterface $input, string $name): ?int
-    {
-        $value = $input->getOption($name);
-
-        if ($value === null || $value === '') {
-            return null;
-        }
-
-        if (!is_string($value) || !ctype_digit($value) || (int) $value < 1) {
             throw new RuntimeException(sprintf('Option --%s must be a positive integer.', $name));
         }
 
