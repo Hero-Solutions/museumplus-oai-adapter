@@ -5,6 +5,7 @@ declare(strict_types=1);
 // Separate PHP processes prevent shared fixtures/functions between suites.
 // These suites use local files and mocks, without the application kernel or .env.
 $suites = [
+    'import-schema',
     'search-filter', 'xml-fragments', 'export-format', 'profiles',
     'reference-mapping', 'raw-archive', 'rebuild-records', 'oai-profiles', 'import-resume',
 ];

@@ -94,11 +94,12 @@ bij heropbouwen hun opgeslagen `museumplus_xml`; die is niet byte-exact.
 Bij uitrol voert de operator ontbrekende migraties uit:
 `php bin/console doctrine:migrations:migrate --no-interaction`.
 De eerdere migraties voor setprofielen, Axiell-identifiers en raw koppelingen
-blijven nodig. Deze opschoning voegt geen migratie toe.
+blijven nodig. Een herstelmigratie maakt ontbrekende importtabellen opnieuw aan,
+ook als de eerdere migraties al geregistreerd zijn. Bestaande gegevens blijven behouden.
 
 ## Lokaal testen
 
-`php -n -d allow_url_fopen=0 tests/run.php` draait negen suites met lokale fixtures
+`php -n -d allow_url_fopen=0 tests/run.php` draait tien suites met lokale fixtures
 en mocks, zonder applicatiekernel, echte database of API-aanvragen.
 
 De losse dump/exportcommando’s, gedeeltelijke importopties en ongebruikte
