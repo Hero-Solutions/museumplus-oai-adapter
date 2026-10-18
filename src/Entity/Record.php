@@ -16,6 +16,10 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Index(name: 'idx_records_datestamp_id', columns: ['datestamp', 'id'])]
 #[ORM\Index(name: 'idx_records_set_datestamp', columns: ['set_spec', 'datestamp'])]
 #[ORM\Index(name: 'idx_records_museumplus_id', columns: ['museumplus_id'])]
+#[ORM\Index(name: 'idx_records_publish_msk_datestamp_id', columns: ['publish_msk', 'datestamp', 'id'])]
+#[ORM\Index(name: 'idx_records_publish_brugge_datestamp_id', columns: ['publish_brugge', 'datestamp', 'id'])]
+#[ORM\Index(name: 'idx_records_publish_muzee_datestamp_id', columns: ['publish_muzee', 'datestamp', 'id'])]
+#[ORM\Index(name: 'idx_records_publish_vkc_datestamp_id', columns: ['publish_vkc', 'datestamp', 'id'])]
 final class Record
 {
     public const PUBLICATION_FIELDS = ['mskObj' => 'publishMsk', 'musea_brugge' => 'publishBrugge', 'muzee' => 'publishMuzee', 'vkc' => 'publishVkc'];
