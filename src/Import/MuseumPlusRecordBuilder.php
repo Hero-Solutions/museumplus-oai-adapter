@@ -21,7 +21,7 @@ final readonly class MuseumPlusRecordBuilder
 
     public function mappingVersion(): string
     {
-        return 'profiles-20261019-msk-periods-v1:'.$this->publicationSelector->fingerprint().':'.$this->mapper->referenceFingerprint();
+        return 'profiles-20261019-publication-v1:'.$this->publicationSelector->fingerprint().':'.$this->mapper->referenceFingerprint();
     }
 
     /** @param (callable(array{field: string, message: string}): void)|null $onWarning
@@ -38,15 +38,15 @@ final readonly class MuseumPlusRecordBuilder
         }
 
         $sets = $this->publicationSelector->select($record->values);
-        $setSpec = $sets[0] ?? $defaultSetSpec;
-        $mapped = $this->mapper->map($record->values);
-        if ($sets === [] && $onWarning !== null) $onWarning(['field' => 'MuseumTxt', 'message' => 'Unassigned museum group; record retained without publication: '.$institution]);
-        $nativeProfile = AxiellProfile::tryFrom($setSpec);
-        $nativeMapped = $nativeProfile !== null && $nativeProfile !== AxiellProfile::Vkc && in_array($setSpec, $sets, true)
+        $nativeProfile = $this->publicationSelector->museumProfile($record->values);
+        $setSpec = $nativeProfile?->value ?? $defaultSetSpec;
+        $mapped = in_array('vkc', $sets, true) ? $this->mapper->map($record->values, AxiellProfile::Vkc) : null;
+        if ($nativeProfile === null && $onWarning !== null) $onWarning(['field' => 'MuseumTxt', 'message' => 'Unassigned museum group; record retained without publication: '.$institution]);
+        $nativeMapped = $nativeProfile !== null && in_array($nativeProfile->value, $sets, true)
             ? $this->mapper->map($record->values, $nativeProfile)
             : null;
         $nativeXml = $nativeMapped === null ? null : $this->renderer->renderRecord($nativeMapped);
-        foreach (array_unique([...$mapped->warnings, ...($nativeMapped?->warnings ?? [])], SORT_REGULAR) as $warning) {
+        foreach (array_unique([...($mapped?->warnings ?? []), ...($nativeMapped?->warnings ?? [])], SORT_REGULAR) as $warning) {
             if ($onWarning !== null) {
                 $onWarning($warning);
             }
@@ -60,7 +60,8 @@ final readonly class MuseumPlusRecordBuilder
             'set_spec' => $setSpec,
             'datestamp' => $date,
             'object_number' => $record->values->objectNumber,
-            'oai_xml' => $this->renderer->renderRecord($mapped),
+            // The existing NOT NULL column stays empty when VKC publication is not allowed.
+            'oai_xml' => $mapped === null ? '' : $this->renderer->renderRecord($mapped),
             'oai_xml_native' => $nativeXml,
             'publish_msk' => (int) in_array('mskObj', $sets, true),
             'publish_brugge' => (int) in_array('musea_brugge', $sets, true),

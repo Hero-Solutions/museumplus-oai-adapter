@@ -42,8 +42,13 @@ check($record->values->invalidFragments === [] && $record->values->repairedFragm
 check(str_contains($record->museumplusXml, '<priref>25001583</priref>') && str_contains($record->museumplusXml, '<NumberTxt>') && !str_contains($record->museumplusXml, '<ID>'), 'Original column names were rewritten in the saved source.');
 $row = $builder->build($record, '2026-10-14 12:00:00', 'test:', 'fallback');
 check($row['oai_identifier'] === 'test:25001583' && $row['set_spec'] === 'musea_brugge', 'Identifier or museum set was not derived from the revised fields.');
+check($row['publish_brugge'] === 0 && $row['publish_vkc'] === 0 && $row['oai_xml'] === '' && $row['oai_xml_native'] === null, 'The unflagged sample was published.');
+check($row['museumplus_xml'] === $record->museumplusXml, 'Unpublished source was changed.');
+// Exercise field mapping separately: the supplied unflagged source must not produce an OAI item.
+$mapped = (new AxiellRecordMapper(new CreatorNormalizer(), new DimensionNormalizer(), new LabelNormalizer()))->map($record->values);
+$rendered = (new AxiellXmlRenderer(new Environment(new FilesystemLoader(dirname(__DIR__).'/templates'))))->renderRecord($mapped);
 $document = new DOMDocument();
-check($document->loadXML($row['oai_xml'], LIBXML_NONET), 'Output XML is invalid.');
+check($document->loadXML($rendered, LIBXML_NONET), 'Output XML is invalid.');
 $xpath = new DOMXPath($document);
 foreach ([
     '/record/priref' => '25001583',
@@ -80,6 +85,7 @@ fwrite(STDOUT, "PASS: supplied priref sample preserves all populated fields, inc
 
 $fields = [
     'MuseumTxt' => '<institution.name>Museum voor Schone Kunsten Gent</institution.name>',
+    'WebPublicationTxt' => '<webpublication>Extranet</webpublication><webpublication>VKC datahub</webpublication>',
     'TitleTxt_nl' => '<Title><title>A</title></Title><Title><title>B</title><title.type>oude titel</title.type></Title>',
     'MaterialTxt' => '<Material><material>papier</material></Material><Material><material>krijt</material><material.notes>wit</material.notes></Material>',
     'DescriptionTxt' => '<Description><description>Alpha & Beta</description></Description>',
@@ -116,6 +122,7 @@ check($xpath->evaluate('string(/record/Current_location[current_location/name="B
 fwrite(STDOUT, "PASS: revised fields preserve repeated groups, optional links/location details/dates, repairs and museum routing\n");
 
 $legacyNames = [
+    'WebPublicationTxt' => 'WebPublicationTxt',
     'MuseumTxt' => 'Naam_bewaarinstelling', 'TitleTxt_nl' => 'Titel_nl',
     'MaterialTxt' => 'Term_materiaal', 'DescriptionTxt' => 'Beschrijving',
     'ProductionDateTxt' => 'Productiedatum', 'CreatorTxt' => 'Naam_vervaardiger',

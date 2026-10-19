@@ -1,6 +1,6 @@
 <?php
 
-// All records, independent of publication flags. Unknown labels stay unassigned.
+// Museum routing only; PublicationSelector separately checks the publication flags.
 // A bare Groeningemuseum label belongs to Brugge (confirmed by the collection operator).
 return [
     'mskObj' => [

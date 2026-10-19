@@ -25,7 +25,7 @@ final class FixtureRepository implements HarvestRepository
         return null;
     }
     public function findEarliestDatestamp(): ?DateTimeImmutable { return new DateTimeImmutable('2026-10-16T00:00:00Z'); }
-    public function findSetSpecs(): array { return array_keys(Record::PUBLICATION_FIELDS); }
+    public function findSetSpecs(): array { return array_values(array_filter(array_keys(Record::PUBLICATION_FIELDS), fn(string $set): bool => $this->countForHarvest(null, null, $set) > 0)); }
     public function findForHarvest(?DateTimeImmutable $from, ?DateTimeImmutable $until, ?string $setSpec, int $limit, int $offset): array
     {
         $records = array_values(array_filter($this->records, static fn (Record $record): bool => $record->getSetSpecs() !== []
@@ -162,3 +162,62 @@ foreach (['ListRecords','ListIdentifiers'] as $verb) {
     check($x->evaluate('string(//o:error/@code)') === 'cannotDisseminateFormat' && $x->evaluate('count(//o:header)') === 0.0, 'Missing rebuilt identity exposed a partial harvest.');
 }
 echo "PASS: four set-specific OAI views, stable identifiers, GetRecord consistency, cross-profile paging, POST tokens, date filters and format restrictions\n";
+
+// Exercise publication from parsed source through both mapped views and the OAI controller.
+$repository = new FixtureRepository();
+$controller = new OaiPmhController($repository);
+$parser = new App\Mapping\MuseumPlusExportParser(new App\Mapping\XmlValueExtractor());
+$builder = new App\Import\MuseumPlusRecordBuilder(
+    new App\Axiell\AxiellRecordMapper(new App\Normalizer\CreatorNormalizer(), new App\Normalizer\DimensionNormalizer(), new App\Normalizer\LabelNormalizer()),
+    new App\Axiell\AxiellXmlRenderer(new Twig\Environment(new Twig\Loader\FilesystemLoader(dirname(__DIR__).'/templates'))),
+);
+$expectedIds = []; $id = 800000;
+foreach (['mskObj'=>'Museum voor Schone Kunsten Gent','musea_brugge'=>'Musea Brugge','muzee'=>'Mu.ZEE, Kunstmuseum aan zee'] as $set=>$museum) {
+    foreach ([[[], []], [['Extranet'], [$set]], [['VKC datahub'], ['vkc']], [['Extranet','VKC datahub'], [$set,'vkc']]] as [$flags,$expectedSets]) {
+        ++$id;
+        $flagXml = implode('', array_map(static fn(string $flag): string => '<webpublication>'.$flag.'</webpublication>', $flags));
+        $source = '<ObjectList><Object><priref>'.$id.'</priref><MuseumTxt>'.htmlspecialchars('<institution.name>'.$museum.'</institution.name>', ENT_XML1).'</MuseumTxt><WebPublicationTxt>'.htmlspecialchars($flagXml, ENT_XML1).'</WebPublicationTxt></Object></ObjectList>';
+        $parsed = $parser->parse($source)[0];
+        $row = $builder->build($parsed, '2026-10-19 00:00:00', 'test:', 'vkc');
+        $actualSets = array_keys(array_filter(Record::PUBLICATION_COLUMNS, static fn(string $column): bool => (bool) $row[$column]));
+        check($actualSets === $expectedSets, 'Parsed flags do not match published sets.');
+        check(($row['oai_xml'] !== '') === in_array('vkc', $expectedSets, true), 'VKC XML was generated without its flag.');
+        check(($row['oai_xml_native'] !== null) === in_array($set, $expectedSets, true), 'Museum XML was generated without Extranet.');
+        check($row['museumplus_xml'] === $parsed->museumplusXml, 'Publication filtering modified source XML.');
+        $repository->records[] = (new Record())->setAxiellPriref($row['axiell_priref'])->setOaiIdentifier($row['oai_identifier'])
+            ->setDatestamp(new DateTimeImmutable($row['datestamp']))->setPublicationSets($actualSets)
+            ->setOaiXml($row['oai_xml'])->setOaiXmlNative($row['oai_xml_native']);
+        foreach (AxiellProfile::cases() as $profile) {
+            $identifier = $profile->identifier($row['axiell_priref']);
+            $allowed = in_array($profile->value, $expectedSets, true);
+            if ($allowed) $expectedIds[$profile->value][] = $identifier;
+            foreach (['GetRecord','ListMetadataFormats'] as $verb) {
+                $params = ['verb'=>$verb,'identifier'=>$identifier];
+                if ($verb === 'GetRecord') $params['metadataPrefix'] = 'oai_adlib';
+                $x = callOai($params);
+                check($x->evaluate('string(//o:error/@code)') === ($allowed ? '' : 'idDoesNotExist'), 'Direct lookup bypassed publication flags: '.$identifier);
+            }
+        }
+    }
+}
+foreach (['ListRecords','ListIdentifiers'] as $verb) {
+    foreach ([null, ...array_keys(Record::PUBLICATION_FIELDS)] as $set) {
+        $params = ['verb'=>$verb,'metadataPrefix'=>'oai_adlib'];
+        if ($set !== null) $params['set'] = $set;
+        $x = callOai($params);
+        $actual = array_map(static fn(DOMNode $node): string => $node->textContent, iterator_to_array($x->query('//o:header/o:identifier')));
+        $expected = $set === null ? array_merge(...array_values($expectedIds)) : $expectedIds[$set];
+        sort($actual); sort($expected);
+        check($actual === $expected && $x->evaluate('count(//o:error)') === 0.0, 'Harvest leaked or omitted a publication profile.');
+    }
+}
+foreach ($repository->records as $record) $record->setPublicationSets([])->setOaiXml('')->setOaiXmlNative(null);
+foreach (['ListRecords','ListIdentifiers'] as $verb) {
+    $x = callOai(['verb'=>$verb,'metadataPrefix'=>'oai_adlib']);
+    check($x->evaluate('string(//o:error/@code)') === 'noRecordsMatch', 'Fully withdrawn dataset still exposed records.');
+}
+$x = callOai(['verb'=>'ListSets']);
+check($x->evaluate('count(//o:set)') === 0.0, 'Withdrawn sets still advertised.');
+$x = callOai(['verb'=>'GetRecord','metadataPrefix'=>'oai_adlib','identifier'=>'vkc:800004']);
+check($x->evaluate('string(//o:error/@code)') === 'idDoesNotExist', 'Withdrawn identifier still exposed metadata.');
+echo "PASS: publication flags control XML creation, all harvests and direct lookups; unflagged sources remain private\n";

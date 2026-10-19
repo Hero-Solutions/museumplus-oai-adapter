@@ -1,7 +1,7 @@
 # MuseumPlus OAI-adapter
 
-De adapter haalt MuseumPlus op, bewaart de ongewijzigde responses en maakt per
-herkend object twee XML-versies: één voor het museum en één voor VKC.
+De adapter haalt MuseumPlus op en bewaart de ongewijzigde responses. Per herkend
+object maakt hij alleen de XML-versies die de publicatievlaggen toelaten.
 De OAI-API leest deze opgeslagen versies. De afzonderlijke setformaten blijven
 gericht op de bestaande Catmandu-fixes; `vkc.fix` wordt niet gebruikt.
 
@@ -34,9 +34,23 @@ hervat met `--resume` en schrijft naar `~/museumplus-import.log`.
 php bin/console app:rebuild-museumplus-records --replace
 ```
 
-Maakt beide XML-versies opnieuw uit de opgeslagen bron voor alle huidige records,
-zonder MuseumPlus te benaderen. Een fout draait de volledige wijziging terug.
-Raw bestanden en bestaande importvoortgang blijven behouden.
+Berekent de publicatievlaggen en toegestane XML-versies uit de opgeslagen bron
+voor alle huidige records, zonder MuseumPlus te benaderen. Vult een verse
+`records_rebuild` in batches, met dezelfde kolommen en indexen als `records`.
+Na controle van het aantal bronrecords vervangt één atomische tabelwissel de
+actieve dataset. Tot dan blijft de API de huidige dataset lezen. Daarna wordt
+de oude tabel `records_rebuild_old` verwijderd.
+
+Raw bestanden, bron-XML, bestaande identifiers, `records_import` en de
+importvoortgang blijven behouden. Ingetrokken vlaggen verdwijnen uit de
+OAI-uitvoer, ook als geen enkel bronrecord nog gepubliceerd mag worden.
+Een volledig lege brontabel wordt geweigerd.
+
+Bij een onderbreking: voer hetzelfde commando opnieuw uit. Het bouwt opnieuw
+een lege `records_rebuild` op en draait een uitgevoerde tabelwissel nooit terug.
+Een fout vóór de wissel laat de actieve tabel intact; na de wissel is de nieuwe
+dataset actief. Voor crashbestendige tabelwissels op MariaDB is InnoDB met
+[MariaDB 10.6.1 of nieuwer](https://mariadb.com/docs/server/reference/sql-statements/data-definition/rename-table) nodig.
 
 Alleen voor herstel van een afgebroken oude import: voeg
 `--source-table=records_import` toe. Dit vervangt de OAI-dataset door de aanwezige
@@ -60,9 +74,26 @@ Ook `Identify`, `ListSets`, `ListMetadataFormats` en `ListIdentifiers` zijn besc
 GET, POST en datumfilters worden ondersteund.
 
 Een gecontroleerde match met de oude Axiell-export behoudt de bestaande priref.
-Anders wordt het MuseumPlus-ID gebruikt. Alle herkende museumrecords komen in
-hun eigen set én VKC, ook zonder publicatievlag. Onbekende instellingen worden
-bewaard, maar niet ontsloten.
+Anders wordt het MuseumPlus-ID gebruikt. Voor herkende instellingen bepaalt
+`WebPublicationTxt/webpublication` de ontsluiting:
+
+| Vlag | OAI-set |
+| --- | --- |
+| `Extranet` | Eigen museumset: `mskObj`, `musea_brugge` of `muzee` |
+| `VKC datahub` | `vkc` |
+| Beide | Eigen museumset én `vkc` |
+| Geen van beide | Geen OAI-records en geen gemapte XML |
+
+Hoofdletters en omringende spaties maken geen verschil; andere waarden geven
+geen publicatierecht. Alle bronrecords blijven bewaard. Onbekende instellingen
+worden niet ontsloten, ook niet met een publicatievlag. De MuseumPlus-aanvraag
+filtert niet op deze vlaggen.
+
+Na uitrol van deze regel: herbouw met `app:rebuild-museumplus-records --replace`.
+Tot die heropbouw voltooid is, blijft de eerder opgeslagen settoewijzing actief.
+Heropbouwen gebruikt de opgeslagen vlaggen; wijzigingen in MuseumPlus vereisen
+een nieuwe import. De OAI-API meldt ingetrokken records niet als verwijderd:
+eerder doorgestuurde records verdwijnen hierdoor niet automatisch uit de Datahub.
 
 ## Configuratie en bewaren
 

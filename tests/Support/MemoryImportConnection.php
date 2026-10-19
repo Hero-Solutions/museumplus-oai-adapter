@@ -22,6 +22,10 @@ final class MemoryImportConnection extends Connection
     public int $renames = 0;
     public int $importScans = 0;
     public int $importTruncates = 0;
+    public int $commits = 0;
+    public array $statements = [];
+    public ?\Closure $beforeRebuildInsert = null;
+    public ?string $failStatement = null;
     private ?array $snapshot = null;
 
     public function __construct()
@@ -46,6 +50,7 @@ final class MemoryImportConnection extends Connection
     public function commit(): void
     {
         $this->snapshot = null;
+        ++$this->commits;
     }
 
     public function rollBack(): void
@@ -72,7 +77,7 @@ final class MemoryImportConnection extends Connection
             return 1;
         }
 
-        if (in_array($query, ['SELECT COUNT(*) FROM records_import', 'SELECT COUNT(*) FROM records'], true)) {
+        if (in_array($query, ['SELECT COUNT(*) FROM records_import', 'SELECT COUNT(*) FROM records', 'SELECT COUNT(*) FROM records_rebuild'], true)) {
             if ($query === 'SELECT COUNT(*) FROM records_import') {
                 ++$this->importScans;
             }
@@ -119,6 +124,7 @@ final class MemoryImportConnection extends Connection
 
     public function insert(string $table, array $data, array $types = []): int|string
     {
+        if ($table === 'records_rebuild' && $this->beforeRebuildInsert !== null) ($this->beforeRebuildInsert)($this, $data);
         if (!array_key_exists($table, $this->tables)) {
             throw new RuntimeException('Missing table: '.$table);
         }
@@ -194,9 +200,11 @@ final class MemoryImportConnection extends Connection
     public function executeStatement(string $sql, array $params = [], array $types = []): int|string
     {
         $sql = preg_replace('/\s+/', ' ', trim($sql));
+        $this->statements[] = $sql;
+        if ($sql === $this->failStatement) throw new RuntimeException('Simulated SQL failure: '.$sql);
 
-        if (str_starts_with($sql, 'TRUNCATE TABLE ') && $this->snapshot !== null) {
-            throw new RuntimeException('TRUNCATE must run outside a transaction.');
+        if (preg_match('/^(CREATE|DROP|RENAME|TRUNCATE) TABLE /', $sql) && $this->snapshot !== null) {
+            throw new RuntimeException('DDL must run outside a transaction.');
         }
 
         if ($sql === 'TRUNCATE TABLE records_import') {
@@ -229,6 +237,13 @@ final class MemoryImportConnection extends Connection
 
         if ($sql === 'CREATE TABLE museumplus_import_state_next LIKE museumplus_import_state') {
             $this->tables['museumplus_import_state_next'] = [];
+
+            return 0;
+        }
+
+        if ($sql === 'CREATE TABLE records_rebuild LIKE records') {
+            if (isset($this->tables['records_rebuild'])) throw new RuntimeException('Rebuild table already exists.');
+            $this->tables['records_rebuild'] = [];
 
             return 0;
         }

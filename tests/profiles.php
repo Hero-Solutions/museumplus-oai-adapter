@@ -99,18 +99,28 @@ echo "PASS: known MSK period translations in both profiles; unknown periods and 
 
 $selector = new PublicationSelector();
 $record = static fn(string $museum, string $number, array $tags): RecordValues => new RecordValues('test', $number, ['Naam_bewaarinstelling::institution.name'=>[$museum], 'WebPublicationTxt::webpublication'=>$tags], [], [], []);
-check($selector->select($record('Musea Brugge','TEST',['Extranet','VKC datahub'])) === ['musea_brugge','vkc'], 'Overlapping Brugge/VKC selection failed.');
-check($selector->select($record('Mu.ZEE, Kunstmuseum aan zee','TEST',['VKC datahub'])) === ['muzee','vkc'], 'Mu.ZEE must have two outputs.');
-check($selector->select($record('Museum voor Schone Kunsten Gent','S-40',[])) === ['mskObj','vkc'], 'MSK without flags must have two outputs.');
-check($selector->select($record('Museum voor Schone Kunsten Gent','NEW-TEST',[])) === ['mskObj','vkc'], 'Old inventory allowlist still restricts MSK.');
-check($selector->select($record('Musea Brugge','S-40',[])) === ['musea_brugge','vkc'], 'Inventory collision changed institution routing.');
-check($selector->select($record('Stad Oostende','TEST',[])) === ['muzee','vkc'], 'Related institution omitted.');
-check($selector->select($record('Groeningemuseum','LP000G03',[])) === ['musea_brugge','vkc'], 'Confirmed Groeningemuseum routing lost.');
-check($selector->select(new RecordValues('test','LP000G03',['Naam_bewaarinstelling::institution.name'=>['Groeningemuseum'],'__orgUnit'=>['org_32_GroeningemuseumMuZee']],[],[],[])) === ['muzee','vkc'], 'Explicit organisation unit must precede the fallback label.');
+foreach (['Museum voor Schone Kunsten Gent'=>'mskObj', 'Musea Brugge'=>'musea_brugge', 'Mu.ZEE, Kunstmuseum aan zee'=>'muzee'] as $museum=>$set) {
+    foreach ([
+        [[], []], [['Extranet'], [$set]], [['VKC datahub'], ['vkc']],
+        [['Extranet','VKC datahub'], [$set,'vkc']],
+        [[' extranet ','vkc DATAHUB','Extranet'], [$set,'vkc']],
+        [['Internet','Geen Extranet','VKC datahub niet toegestaan','Extranet;VKC datahub'], []],
+    ] as [$flags, $expected]) {
+        check($selector->select($record($museum,'TEST',$flags)) === $expected, 'Publication flags select the wrong sets for '.$museum);
+    }
+}
+$bothFlags = ['WebPublicationTxt::webpublication'=>['Extranet','VKC datahub']];
+check($selector->select($record('Museum voor Schone Kunsten Gent','S-40',[])) === [], 'An old MSK inventory match bypassed publication flags.');
+check($selector->select($record('Museum voor Schone Kunsten Gent','NEW-TEST',['Extranet'])) === ['mskObj'], 'Old inventory allowlist still restricts MSK.');
+check($selector->select($record('Musea Brugge','S-40',['Extranet'])) === ['musea_brugge'], 'Inventory collision changed institution routing.');
+check($selector->select($record('Stad Oostende','TEST',['Extranet'])) === ['muzee'], 'Related institution omitted.');
+check($selector->select($record('Groeningemuseum','LP000G03',['Extranet'])) === ['musea_brugge'], 'Confirmed Groeningemuseum routing lost.');
+check($selector->select(new RecordValues('test','LP000G03',$bothFlags + ['Naam_bewaarinstelling::institution.name'=>['Groeningemuseum'],'__orgUnit'=>['org_32_GroeningemuseumMuZee']],[],[],[])) === ['muzee','vkc'], 'Explicit organisation unit must precede the fallback label.');
 check($selector->select($record('Unlisted museum','TEST',['Extranet','VKC datahub'])) === [], 'Unknown institution guessed from flags.');
-check($selector->select(new RecordValues('25842813','1949-AU-9-verso',[])) === ['mskObj','vkc'], 'Locally verified record without institution lost.');
-check($selector->select(new RecordValues('25842813','NEW-NUMBER',[])) === [], 'Record override survived an inventory change.');
-check($selector->select(new RecordValues('25842813','1949-AU-9-verso',['Naam_bewaarinstelling::institution.name'=>['Musea Brugge']])) === ['musea_brugge','vkc'], 'Record override replaced a current explicit institution.');
+check($selector->select(new RecordValues('25842813','1949-AU-9-verso',[])) === [], 'Record override bypassed publication flags.');
+check($selector->select(new RecordValues('25842813','1949-AU-9-verso',$bothFlags)) === ['mskObj','vkc'], 'Locally verified record without institution lost.');
+check($selector->select(new RecordValues('25842813','NEW-NUMBER',$bothFlags)) === [], 'Record override survived an inventory change.');
+check($selector->select(new RecordValues('25842813','1949-AU-9-verso',$bothFlags + ['Naam_bewaarinstelling::institution.name'=>['Musea Brugge']])) === ['musea_brugge','vkc'], 'Record override replaced a current explicit institution.');
 
 [$x] = mapped(['MuseumTxt'=>'<institution.name>Groeningemuseum</institution.name>', 'CollectionTxt'=>'<collection>Groeningemuseum</collection><collection>Prenten</collection>'], AxiellProfile::Brugge);
 check($x->evaluate('string(/record/institution.name)') === 'Musea Brugge' && $x->evaluate('string(/record/institution.original_name)') === 'Groeningemuseum', 'Affiliate provider/original name lost.');

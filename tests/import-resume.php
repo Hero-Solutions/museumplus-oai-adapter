@@ -200,9 +200,11 @@ $newExport = file_get_contents(__DIR__.'/fixtures/museumplus-priref.xml');
 $requests = runImport($db, static fn (): MockResponse => new MockResponse($newExport));
 check($requests === [[0, 1000]] && array_keys($db->tables['records']) === ['test:25001583'], 'The new export was skipped instead of stored.');
 $row = $db->tables['records']['test:25001583'];
-check($row['object_number'] === 'BL-2021-002' && $row['set_spec'] === 'musea_brugge' && str_contains($row['oai_xml'], 'Heilige Martinus'), 'The new export stored incomplete mapped metadata.');
+check($row['object_number'] === 'BL-2021-002' && $row['set_spec'] === 'musea_brugge' && str_contains($row['museumplus_xml'], 'Heilige Martinus'), 'The new export lost source metadata.');
+check($row['publish_brugge'] === 0 && $row['publish_vkc'] === 0 && $row['oai_xml'] === '' && $row['oai_xml_native'] === null, 'The unflagged export was published.');
+check($testArchive->read($row['raw_response_id']) === $newExport, 'Unpublished response bytes were lost.');
 check($db->tables['museumplus_import_state'][1]['stored'] === 1 && $db->tables['museumplus_import_state'][1]['skipped'] === 0, 'The new export advanced as skipped.');
-fwrite(STDOUT, "PASS: the supplied priref export is stored and published with mapped metadata\n");
+fwrite(STDOUT, "PASS: the unflagged priref export is stored byte-exactly without OAI metadata\n");
 
 foreach ([
     '<Object><UnknownId>123</UnknownId><CreatorTxt>Test</CreatorTxt></Object>' => 'without an ID or priref',
@@ -478,6 +480,7 @@ fwrite(STDOUT, "PASS: gradual recovery is capped at the configured batch size, i
 // Retain the verified Axiell identity during a full import, in both output views.
 $known = '<Object><priref>26245498</priref>'
     .'<MuseumTxt>&lt;institution.name>Museum voor Schone Kunsten Gent&lt;/institution.name></MuseumTxt>'
+    .'<WebPublicationTxt>&lt;webpublication>Extranet&lt;/webpublication>&lt;webpublication>VKC datahub&lt;/webpublication></WebPublicationTxt>'
     .'<NumberTxt>&lt;object_number>S-40&lt;/object_number></NumberTxt></Object>';
 $db = database();
 runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList>'.$known.'</ObjectList>'));
@@ -496,7 +499,7 @@ echo "PASS: full import retains known Axiell identities in both views; collision
 $db = database();
 $body = "<?xml version='1.0' encoding='UTF-8'?>\r\n<ObjectList>\r\n";
 foreach (['Musea Brugge','Museum voor Schone Kunsten Gent','Mu.ZEE, Kunstmuseum aan zee'] as $i=>$museum) {
-    $body .= '<Object><priref>'.(901 + $i).'</priref><MuseumTxt>&lt;institution.name>'.$museum.'&lt;/institution.name></MuseumTxt><TitleTxt_nl>&lt;Title>&lt;title>Één &amp; twee&lt;/title>&lt;/Title></TitleTxt_nl><Empty></Empty></Object>'."\r\n";
+    $body .= '<Object><priref>'.(901 + $i).'</priref><MuseumTxt>&lt;institution.name>'.$museum.'&lt;/institution.name></MuseumTxt><WebPublicationTxt>&lt;webpublication>Extranet&lt;/webpublication>&lt;webpublication>VKC datahub&lt;/webpublication></WebPublicationTxt><TitleTxt_nl>&lt;Title>&lt;title>Één &amp; twee&lt;/title>&lt;/Title></TitleTxt_nl><Empty></Empty></Object>'."\r\n";
 }
 $body .= "</ObjectList>\r\n";
 $beforeFiles = glob($testArchive->directory().'/*.xml');

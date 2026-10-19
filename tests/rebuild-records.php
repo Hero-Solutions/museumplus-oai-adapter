@@ -31,7 +31,16 @@ function check(bool $condition, string $message): void
     }
 }
 
-function sourceRow(int $id, string $museum = 'Musea Brugge'): array
+function sourceTablesUnchanged(MemoryImportConnection $db, array $before): bool
+{
+    foreach (['records', 'records_import', 'museumplus_import_state', 'museumplus_import_errors'] as $table) {
+        if ($db->tables[$table] !== $before[$table]) return false;
+    }
+
+    return true;
+}
+
+function sourceRow(int $id, string $museum = 'Musea Brugge', array $flags = ['Extranet','VKC datahub']): array
 {
     $fragment = static fn (string $xml): string => htmlspecialchars($xml, ENT_QUOTES | ENT_XML1, 'UTF-8');
 
@@ -41,7 +50,7 @@ function sourceRow(int $id, string $museum = 'Musea Brugge'): array
         'museumplus_xml' => '<Object><ID>'.$id.'</ID>'
             .'<Naam_bewaarinstelling>'.$fragment('<institution.name>'.$museum.'</institution.name>').'</Naam_bewaarinstelling>'
             .'<Objectnummer>'.$fragment('<object_number>INV-'.$id.'</object_number>').'</Objectnummer>'
-            .'<WebPublicationTxt>'.$fragment('<webpublication>Extranet</webpublication>').'</WebPublicationTxt>'
+            .'<WebPublicationTxt>'.$fragment(implode('', array_map(static fn(string $flag): string => '<webpublication>'.$flag.'</webpublication>', $flags))).'</WebPublicationTxt>'
             .'<Titel_nl>'.$fragment('<Title><title>Source title '.$id.'</title></Title>').'</Titel_nl></Object>',
         // Deliberately stale derived values: none may be reused.
         'oai_identifier' => 'stale:'.$id,
@@ -101,6 +110,10 @@ check(array_column($db->tables['records'], 'set_spec') === ['musea_brugge', 'muz
 check($db->tables['records']['current:1']['publish_brugge'] === 1 && $db->tables['records']['current:3']['publish_msk'] === 1 && $db->tables['records']['current:3']['publish_vkc'] === 1 && $db->tables['records']['current:5']['publish_vkc'] === 0, 'Museum pairing or unknown-institution exclusion failed.');
 foreach ($db->tables['records'] as $row) {
     $id = (int) $row['museumplus_id'];
+    if ($id === 5) {
+        check($row['oai_xml'] === '' && $row['oai_xml_native'] === null && $row['museumplus_xml'] === $saved['records_import'][$id]['museumplus_xml'], 'Unknown museum received mapped XML or lost its source.');
+        continue;
+    }
     $xml = new DOMDocument();
     check($xml->loadXML($row['oai_xml']), 'Rebuilt XML is malformed.');
     check($xml->getElementsByTagName('title')->item(0)?->textContent === 'Source title '.$id, 'Old XML reused or current mapper not used.');
@@ -111,7 +124,9 @@ foreach ($db->tables['records'] as $row) {
 foreach (['records_import', 'museumplus_import_state', 'museumplus_import_errors'] as $table) {
     check($db->tables[$table] === $saved[$table], 'Changed preserved table '.$table);
 }
-check(!$db->locked, 'Lock was not released.');
+check(!$db->locked && $db->renames === 1, 'Lock was not released or publication was not a single swap.');
+check(in_array('CREATE TABLE records_rebuild LIKE records', $db->statements, true), 'Rebuild did not copy the current schema and indexes.');
+check(!isset($db->tables['records_rebuild']) && !isset($db->tables['records_rebuild_old']), 'Successful rebuild left scratch tables.');
 fwrite(STDOUT, "PASS: fresh XML, identifiers, sets, timestamps and object numbers; source/checkpoint/errors preserved\n");
 
 $published = $db->tables;
@@ -130,7 +145,7 @@ foreach (['malformed', 'mismatch', 'insert', 'empty'] as $failure) {
     } elseif ($failure === 'mismatch') {
         $rows[1]['museumplus_id'] = '999';
     } elseif ($failure === 'empty') {
-        $rows = [sourceRow(1, 'Een ander museum')];
+        $rows = [];
     }
     $db = database($rows);
     $db->tables['records']['old'] = ['oai_identifier' => 'old', 'oai_xml' => '<old/>'];
@@ -138,10 +153,10 @@ foreach (['malformed', 'mismatch', 'insert', 'empty'] as $failure) {
         $db->failInsertId = '2';
     }
     $saved = $db->tables;
-    runRebuild($db, ['--replace' => true], $failure === 'empty' ? 'No publishable records' : 'Failed rebuilding MuseumPlus');
-    check($db->tables === $saved && !$db->locked, 'Failure did not restore all data: '.$failure);
+    runRebuild($db, ['--replace' => true], $failure === 'empty' ? 'No source records' : 'Failed rebuilding MuseumPlus');
+    check(sourceTablesUnchanged($db, $saved) && !$db->locked && $db->renames === 0, 'Failure changed a source table: '.$failure);
 }
-fwrite(STDOUT, "PASS: full rollback on malformed XML, wrong ID, insert failure or empty selection\n");
+fwrite(STDOUT, "PASS: current/source tables preserved on malformed XML, wrong ID, insert failure or empty source\n");
 
 $db = database([sourceRow(1)]);
 $db->locked = true;
@@ -151,6 +166,7 @@ check($db->tables === $saved && $db->locked, 'Touched an active import or releas
 $db = database(array_map(sourceRow(...), range(1, 205)));
 runRebuild($db);
 check(count($db->tables['records']) === 205 && isset($db->tables['records']['current:205']), 'Paging lost records.');
+check($db->commits === 3, 'Rebuild did not commit in batches of 100.');
 $row = sourceRow(1);
 $row['museumplus_xml'] = str_replace('</Object>', '<Broken>&lt;unclosed&gt;</Broken></Object>', $row['museumplus_xml']);
 $db = database([$row]);
@@ -194,9 +210,9 @@ check($db->tables['records_import'] === [] && $db->tables['museumplus_import_sta
 $db->failInsertId = '2';
 $before = $db->tables;
 runRebuild($db, ['--replace'=>true,'--source-table'=>'records'], 'Failed rebuilding MuseumPlus');
-check($db->tables === $before, 'Failed in-place rebuild did not roll back.');
+check(sourceTablesUnchanged($db, $before), 'Failed rebuild changed active/source records.');
 runRebuild($db, ['--replace'=>true,'--source-table'=>'arbitrary'], 'source-table must be');
-echo "PASS: completed-import rebuild, revised export aliases, native profiles, source preservation and transactional update rollback\n";
+echo "PASS: completed-import rebuild, revised export aliases, native profiles and source preservation before publication\n";
 
 $known = sourceRow(26245498, 'Museum voor Schone Kunsten Gent');
 $known['museumplus_xml'] = str_replace('INV-26245498', 'S-40', $known['museumplus_xml']);
@@ -212,7 +228,7 @@ check($rebuilt['museumplus_xml'] === $known['museumplus_xml'], 'Identity preserv
 $db = database([$known, sourceRow(310000001)]);
 $before = $db->tables;
 runRebuild($db, [], 'Failed rebuilding MuseumPlus');
-check($db->tables === $before && !$db->locked, 'Rebuild priref collision did not roll back.');
+check(sourceTablesUnchanged($db, $before) && !$db->locked, 'Rebuild priref collision changed source tables.');
 echo "PASS: retained Axiell identity indexed in both formats; collision rollback preserves source\n";
 
 // Prefer the full original response over the convenience Object column.
@@ -240,5 +256,93 @@ check($db->tables['records']['current:901']['raw_response_id'] === $entry['id'],
 $before = $db->tables;
 file_put_contents($testArchive->directory().'/'.$entry['id'].'.xml', 'tampered');
 runRebuild($db, ['--source-table'=>'records','--replace'=>true], 'checksum differs');
-check($db->tables === $before && !$db->locked, 'Bad raw source silently fell back or destroyed current records.');
+check(sourceTablesUnchanged($db, $before) && !$db->locked, 'Bad raw source silently fell back or destroyed current records.');
 echo "PASS: verified raw sources rebuild four profiles offline; source links survive; corruption rolls back without fallback\n";
+
+// Removing publication flags must clear old output, even when every record is withdrawn.
+$db = database([sourceRow(701), sourceRow(702), sourceRow(703), sourceRow(704)]);
+runRebuild($db);
+$expected = [701=>[], 702=>['musea_brugge'], 703=>['vkc'], 704=>['musea_brugge','vkc']];
+$sources = [];
+foreach ([701=>[], 702=>['Extranet'], 703=>['VKC datahub'], 704=>['Extranet','VKC datahub']] as $id=>$flags) {
+    $sources[$id] = sourceRow($id, flags: $flags)['museumplus_xml'];
+    $db->tables['records']['current:'.$id]['museumplus_xml'] = $sources[$id];
+}
+runRebuild($db, ['--replace'=>true], useDefaultSource: true);
+foreach ($expected as $id=>$sets) {
+    $row = $db->tables['records']['current:'.$id];
+    check($row['publish_brugge'] === (int) in_array('musea_brugge', $sets, true) && $row['publish_vkc'] === (int) in_array('vkc', $sets, true), 'Rebuild did not apply independent publication flags.');
+    check(($row['oai_xml'] !== '') === in_array('vkc', $sets, true) && ($row['oai_xml_native'] !== null) === in_array('musea_brugge', $sets, true), 'Withdrawn output was not cleared.');
+    check($row['museumplus_xml'] === $sources[$id] && $row['axiell_priref'] === (string) $id, 'Withdrawal changed source or identity.');
+    $db->tables['records']['current:'.$id]['museumplus_xml'] = sourceRow($id, flags: [])['museumplus_xml'];
+}
+$output = runRebuild($db, ['--replace'=>true], useDefaultSource: true);
+check(count($db->tables['records']) === 4 && str_contains($output, '0 belong to a publication set'), 'All-unpublished rebuild was rejected or deleted sources.');
+foreach ($db->tables['records'] as $row) {
+    check($row['publish_brugge'] === 0 && $row['publish_vkc'] === 0 && $row['oai_xml'] === '' && $row['oai_xml_native'] === null, 'All-unpublished rebuild kept old OAI output.');
+}
+echo "PASS: rebuild revokes individual and all publications without deleting sources or changing identifiers\n";
+
+// A later failed batch leaves committed scratch rows, but never changes the active dataset.
+$db = database(array_map(sourceRow(...), range(1, 205)));
+$db->tables['records']['old:999'] = sourceRow(999);
+$before = $db->tables;
+$db->beforeRebuildInsert = static function (MemoryImportConnection $db) use ($before): void {
+    check(sourceTablesUnchanged($db, $before), 'A source or active table changed while the rebuild was being filled.');
+};
+$db->failInsertId = '102';
+runRebuild($db, ['--replace'=>true], 'Failed rebuilding MuseumPlus 102');
+check(sourceTablesUnchanged($db, $before) && $db->renames === 0 && !$db->locked, 'Partial rebuild was published or retained its lock.');
+check(count($db->tables['records_rebuild']) === 100, 'Failed batch did not roll back independently of earlier batches.');
+$db->failInsertId = null;
+runRebuild($db, ['--replace'=>true]);
+check(count($db->tables['records']) === 205 && !isset($db->tables['records']['old:999']), 'Restart reused partial rows or kept obsolete active records.');
+foreach (['records_import', 'museumplus_import_state', 'museumplus_import_errors'] as $table) {
+    check($db->tables[$table] === $before[$table], 'Restart changed '.$table);
+}
+echo "PASS: current dataset remains readable during all batches; failed scratch batches are discarded on retry\n";
+
+$db = database([sourceRow(1), sourceRow(2)]);
+$before = $db->tables;
+$db->beforeRebuildInsert = static function (MemoryImportConnection $db, array $data): void {
+    if ($data['museumplus_id'] === '2') unset($db->tables['records_rebuild']['current:1']);
+};
+runRebuild($db, [], 'Rebuild count does not match the source');
+check(sourceTablesUnchanged($db, $before) && $db->renames === 0, 'Incomplete scratch table was published.');
+echo "PASS: row-count validation refuses an incomplete rebuild before swapping\n";
+
+// Losing the RENAME response may mean the old OR new table is active. Never swap back.
+foreach (['before', 'after'] as $failure) {
+    $db = database([sourceRow(1), sourceRow(2)]);
+    $db->tables['records']['old:999'] = sourceRow(999);
+    $before = $db->tables;
+    $db->failRename = $failure;
+    runRebuild($db, ['--replace'=>true], 'atomic rename');
+    check(!$db->locked, 'Failed swap retained the import/rebuild lock.');
+    if ($failure === 'before') {
+        check($db->tables['records'] === $before['records'] && $db->renames === 0, 'Rejected swap changed active records.');
+    } else {
+        check(array_keys($db->tables['records']) === ['current:1','current:2'] && $db->renames === 1, 'Lost response reversed or partially applied the swap.');
+        check($db->tables['records_rebuild_old'] === $before['records'], 'Lost response destroyed the previous dataset.');
+    }
+    $db->failRename = null;
+    runRebuild($db, ['--replace'=>true]);
+    check(array_keys($db->tables['records']) === ['current:1','current:2'], 'Retry restored obsolete records or lost rebuilt records.');
+    foreach (['records_import', 'museumplus_import_state', 'museumplus_import_errors'] as $table) {
+        check($db->tables[$table] === $before[$table], 'Swap failure/retry changed '.$table);
+    }
+}
+echo "PASS: failed and uncertain atomic swaps retry safely without reverting publication or touching import progress\n";
+
+// Cleanup happens after publication and cannot roll it back.
+$db = database([sourceRow(1)]);
+$db->tables['records']['old:999'] = sourceRow(999);
+$before = $db->tables;
+$db->failStatement = 'DROP TABLE records_rebuild_old';
+$output = runRebuild($db, ['--replace'=>true]);
+check(str_contains($output, 'Rebuild published, but') && isset($db->tables['records']['current:1']), 'Cleanup error hid a successful publication.');
+check($db->tables['records_rebuild_old'] === $before['records'] && !$db->locked, 'Cleanup failure lost the old table or retained the lock.');
+$db->failStatement = null;
+runRebuild($db, ['--replace'=>true]);
+check(!isset($db->tables['records_rebuild_old']) && array_keys($db->tables['records']) === ['current:1'], 'Retry did not clean up the old table safely.');
+echo "PASS: failed post-publication cleanup is reported without reverting the active dataset\n";
