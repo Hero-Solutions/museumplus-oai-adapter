@@ -5,6 +5,10 @@
 return [
     'mskObj' => [
         'name' => 'Museum voor Schone Kunsten Gent', 'org_prefix' => 'org_31_',
+        'name_translations' => [
+            'fr' => 'Musée des Beaux-Arts de Gand',
+            'en' => 'Museum of Fine Arts Ghent',
+        ],
         'institutions' => ['Museum voor Schone Kunsten Gent', 'Sint-Baafskathedraal Gent', 'Sint-Niklaaskerk Willebroek', 'Voormalige collectie MSK Gent'],
         // Empty MuseumTxt in the supplied export; owner, collection and matching workPID all identify MSK.
         'records_without_institution' => ['25842813' => '1949-AU-9-verso'],

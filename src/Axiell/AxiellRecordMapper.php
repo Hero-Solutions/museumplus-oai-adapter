@@ -38,6 +38,9 @@ final class AxiellRecordMapper
         $this->addText($elements, 'priref', $this->priref($record));
         $this->addNode($elements, 'institution.name', [
             AxiellElement::text('name', $museum === null ? $sourceInstitution : $this->museumGroups->name($museum)),
+            // Existing MSK fixes interpret language_script by position: French, then English.
+            AxiellElement::text('language_script', $museum === null ? null : $this->museumGroups->translatedName($museum, 'fr')),
+            AxiellElement::text('language_script', $museum === null ? null : $this->museumGroups->translatedName($museum, 'en')),
         ]);
         if ($museum !== null && $sourceInstitution !== $this->museumGroups->name($museum)) $this->addText($elements, 'institution.original_name', $sourceInstitution);
         $this->addText($elements, 'administration_name', $this->first($record, 'Bewaarinstelling_lokaal::administration_name'));
@@ -60,9 +63,15 @@ final class AxiellRecordMapper
             'production.date.end.prec' => 'Productiedatum::Production/production.date.end.prec',
             'production.date.notes' => 'Productiedatum::Production/production.date.notes',
         ]);
+        $periods = [];
         foreach (array_unique($this->values($record, 'Periode::Production_period/production.period') ?: $this->values($record, 'Periode::production.period')) as $period) {
-            $this->addNode($elements, 'production.period', [AxiellElement::text('term', $period)]);
+            $this->addNode($periods, 'production.period', [AxiellElement::text('term', $period)]);
         }
+        // Both MSK fixes expect French/English notes from the native Axiell period terms.
+        if ($museum === AxiellProfile::Msk && $profile === AxiellProfile::Vkc) {
+            $periods = $this->reference->enrich($periods, AxiellProfile::Msk);
+        }
+        array_push($elements, ...$periods);
         foreach ($this->values($record, 'Periode::Production_period/production.period.notes') as $note) $this->addText($elements, 'production.period.notes', $note);
         $this->addMaterials($elements, $record);
         $this->addText($elements, 'physical_description', $this->first($record, 'Physical_description_NL'));

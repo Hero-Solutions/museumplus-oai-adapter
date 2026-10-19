@@ -83,6 +83,14 @@ Instellingsgroepen staan in `config/museum-groups.php`. Bewaar en deploy ook
 `config/axiell-reference.json` en `config/axiell-reference.jsonl`: deze behouden
 de gecontroleerde oude identifiers en veldinterpretaties.
 
+De MSK-configuratie bevat vaste Franse en Engelse instellingsnamen. Beide
+verschijnen in `mskObj` en de VKC-versie als `institution.name/language_script`,
+eerst Frans en dan Engels, zoals de bestaande Catmandu-fixes verwachten.
+MSK-periodes krijgen in beide versies de bekende Franse en Engelse vertalingen
+uit het Axiell-woordenboek als `production.period/notes`, in dezelfde taalvolgorde.
+Voor onbekende periodes worden geen vertalingen verzonnen.
+Herbouw na uitrol de opgeslagen records en laat de pipeline opnieuw ophalen.
+
 Raw responses staan in `var/museumplus-raw/`: één ongewijzigde `.xml` per poging,
 met `.json` voor positie, status en checksum. Ook foutantwoorden blijven bewaard.
 De database verwijst naar deze bestanden via `raw_response_id`. Maak de map

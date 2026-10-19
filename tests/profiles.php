@@ -56,6 +56,47 @@ check($x->evaluate('string(/record/material_description)') === 'olieverf op doek
 [$x] = mapped(['Vertaalde_titel'=>'<Title><title>Old export title</title><title.language>Onbekende taal</title.language></Title>']);
 check($x->evaluate('string(/record/Titel_translation/title.language)') === 'Onbekende taal', 'Old title fallback or unknown language lost.');
 
+foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
+    foreach (['Museum voor Schone Kunsten Gent', 'Sint-Baafskathedraal Gent'] as $institution) {
+        [$x] = mapped(['MuseumTxt'=>'<institution.name>'.$institution.'</institution.name>'], $profile);
+        check($x->evaluate('string(/record/institution.name/name)') === 'Museum voor Schone Kunsten Gent', 'MSK provider name changed.');
+        check($x->evaluate('count(/record/institution.name/language_script)') === 2.0, 'MSK translations missing or duplicated in '.$profile->value);
+        check($x->evaluate('string(/record/institution.name/language_script[1])') === 'Musée des Beaux-Arts de Gand', 'MSK French name missing from first Catmandu language slot.');
+        check($x->evaluate('string(/record/institution.name/language_script[2])') === 'Museum of Fine Arts Ghent', 'MSK English name missing from second Catmandu language slot.');
+        if ($institution !== 'Museum voor Schone Kunsten Gent') {
+            check($x->evaluate('string(/record/institution.original_name)') === $institution, 'MSK affiliate name lost.');
+        }
+    }
+}
+foreach (['Musea Brugge'=>AxiellProfile::Brugge, 'Mu.ZEE, Kunstmuseum aan zee'=>AxiellProfile::Muzee] as $institution=>$nativeProfile) {
+    foreach ([$nativeProfile, AxiellProfile::Vkc] as $profile) {
+        [$x] = mapped(['MuseumTxt'=>'<institution.name>'.$institution.'</institution.name>'], $profile);
+        check($x->evaluate('count(/record/institution.name/language_script)') === 0.0, 'MSK translations leaked into another museum.');
+    }
+}
+echo "PASS: MSK institution translations in museum/VKC profiles and Catmandu language order; other museums unchanged\n";
+
+$periodFields = ['PeriodTxt'=>'<Production_period><production.period>20ste eeuw</production.period><production.period.notes>Vrije bronnotitie</production.period.notes></Production_period>'
+    .'<Production_period><production.period>onbekende periode</production.period></Production_period>'
+    .'<Production_period><production.period>19de eeuw</production.period></Production_period>'];
+foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
+    [$x] = mapped($periodFields + ['MuseumTxt'=>'<institution.name>Museum voor Schone Kunsten Gent</institution.name>'], $profile);
+    check($x->evaluate('count(/record/production.period)') === 3.0, 'MSK period count changed.');
+    foreach (['20ste eeuw'=>['20ème siècle','20th century'], '19de eeuw'=>['19ème siècle','19th century']] as $period=>$translations) {
+        $path = '/record/production.period[term="'.$period.'"]';
+        check($x->evaluate('count('.$path.'/notes)') === 2.0, 'MSK period translations missing or duplicated in '.$profile->value);
+        check($x->evaluate('string('.$path.'/notes[1])') === $translations[0], 'MSK French period translation shifted.');
+        check($x->evaluate('string('.$path.'/notes[2])') === $translations[1], 'MSK English period translation shifted.');
+    }
+    check($x->evaluate('count(/record/production.period[term="onbekende periode"]/notes)') === 0.0, 'Unknown period inherited translations.');
+    check($x->evaluate('string(/record/production.period.notes)') === 'Vrije bronnotitie', 'Source period note changed into a translation.');
+}
+foreach (['Musea Brugge', 'Mu.ZEE, Kunstmuseum aan zee', 'Onbekende instelling'] as $institution) {
+    [$x] = mapped($periodFields + ['MuseumTxt'=>'<institution.name>'.$institution.'</institution.name>'], AxiellProfile::Vkc);
+    check($x->evaluate('count(/record/production.period/notes)') === 0.0, 'MSK period translations leaked into another museum.');
+}
+echo "PASS: known MSK period translations in both profiles; unknown periods and other museums untouched\n";
+
 $selector = new PublicationSelector();
 $record = static fn(string $museum, string $number, array $tags): RecordValues => new RecordValues('test', $number, ['Naam_bewaarinstelling::institution.name'=>[$museum], 'WebPublicationTxt::webpublication'=>$tags], [], [], []);
 check($selector->select($record('Musea Brugge','TEST',['Extranet','VKC datahub'])) === ['musea_brugge','vkc'], 'Overlapping Brugge/VKC selection failed.');

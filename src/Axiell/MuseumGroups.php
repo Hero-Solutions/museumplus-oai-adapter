@@ -44,5 +44,6 @@ final class MuseumGroups
     }
 
     public function name(AxiellProfile $profile): string { return $this->groups[$profile->value]['name']; }
+    public function translatedName(AxiellProfile $profile, string $language): ?string { return $this->groups[$profile->value]['name_translations'][$language] ?? null; }
     public function fingerprint(): string { return hash('sha256', serialize($this->groups)); }
 }
