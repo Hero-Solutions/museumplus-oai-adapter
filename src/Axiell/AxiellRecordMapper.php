@@ -409,9 +409,9 @@ final class AxiellRecordMapper
         }
         foreach ($rows as $row) {
             foreach ($row['value'] as $value) {
-                foreach ($this->dimensionNormalizer->normalize([$value], $row['unit'], $row['part']) as $dimension) {
+                foreach ($this->dimensionNormalizer->normalize([$value], $row['unit'], $row['part'], $row['type'][0] ?? null) as $dimension) {
                     $this->addNode($elements, 'Dimension', [
-                        AxiellElement::text('dimension.type', ($row['type'][0] ?? '') === 'afmetingen object' && $dimension['type'] !== null ? $dimension['type'] : ($row['type'][0] ?? $dimension['type'])),
+                        AxiellElement::text('dimension.type', $dimension['type']),
                         AxiellElement::text('dimension.unit', $dimension['unit']),
                         AxiellElement::text('dimension.value', $dimension['value']),
                         AxiellElement::text('dimension.part', $dimension['part']),
@@ -596,13 +596,24 @@ final class AxiellRecordMapper
     {
         $rows = $this->rows($record, [
             'term' => 'Term_materiaal::Material/material',
+            'fr' => 'Term_materiaal::Material/material.fr',
+            'en' => 'Term_materiaal::Material/material.en',
             'part' => 'Term_materiaal::Material/material.part',
             'notes' => 'Term_materiaal::Material/material.notes',
         ]);
 
         foreach ($rows as $row) {
+            $translations = [];
+            if ($row['fr'] !== [] || $row['en'] !== []) {
+                // The existing MSK fixes read notes by position: French, then English.
+                // Keep both slots so a missing translation cannot shift the language.
+                foreach (['fr', 'en'] as $language) {
+                    $translations[] = AxiellElement::text('notes', $row[$language][0] ?? null)
+                        ?? new AxiellElement('notes', '');
+                }
+            }
             $this->addNode($elements, 'Material', [
-                AxiellElement::node('material', $this->texts('term', $row['term'])),
+                AxiellElement::node('material', [...$this->texts('term', $row['term']), ...$translations]),
                 ...$this->texts('material.part', $row['part']),
                 ...$this->texts('material.notes', $row['notes']),
             ]);

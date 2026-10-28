@@ -11,6 +11,8 @@ final class DimensionNormalizer
         3 => ['hoogte', 'breedte', 'diepte'],
     ];
 
+    private const TYPES = ['hoogte', 'breedte', 'diepte', 'diameter', 'dikte', 'lengte', 'gewicht'];
+
     /** Recover only a complete, explicitly labelled h/b[/d] measurement, without extra context. */
     public function fromExplicitFreeText(?string $text): array
     {
@@ -29,14 +31,27 @@ final class DimensionNormalizer
      *
      * @return list<array{type: string|null, value: string, unit: string|null, part: string|null}>
      */
-    public function normalize(array $values, array $units = [], array $parts = []): array
+    public function normalize(array $values, array $units = [], array $parts = [], ?string $type = null): array
     {
         $dimensions = [];
+        $type = $this->clean($type);
+        $explicitTypes = $type === null ? [] : preg_split('/\s*[x×]\s*/u', strtolower($type));
+        $knownTypes = $explicitTypes !== [] && array_diff($explicitTypes, self::TYPES) === [];
 
         foreach ($values as $index => $value) {
             $parsed = $this->parseValue($value, $units[$index] ?? null);
             $part = $parts[$index] ?? 'geheel';
-            $types = self::TYPES_BY_COUNT[count($parsed['values'])] ?? [];
+            $types = $knownTypes ? $explicitTypes : [];
+            if ($type === null || strtolower($type) === 'afmetingen object') {
+                $types = self::TYPES_BY_COUNT[count($parsed['values'])] ?? [];
+            }
+
+            // Only split when every value has a corresponding type, in source order.
+            // Keep an ambiguous measurement together instead of guessing its axes.
+            if (count($types) !== count($parsed['values'])) {
+                $types = [$knownTypes && count($explicitTypes) === 1 ? $explicitTypes[0] : $type];
+                $parsed['values'] = [$parsed['value']];
+            }
 
             foreach ($parsed['values'] as $valueIndex => $singleValue) {
                 $dimensions[] = [
@@ -52,23 +67,24 @@ final class DimensionNormalizer
     }
 
     /**
-     * @return array{values: list<string>, unit: string|null}
+     * @return array{value: string, values: list<string>, unit: string|null}
      */
     private function parseValue(string $value, ?string $fallbackUnit): array
     {
         $value = trim($value);
         $unit = $this->clean($fallbackUnit);
 
-        if (preg_match('/^(?<values>.+?)\s+(?<unit>[a-zA-Zµ]+)$/u', $value, $matches) === 1) {
-            $value = trim($matches['values']);
-            $unit = $matches['unit'];
+        $number = '[+-]?\d+(?:[.,]\d+)?';
+        if (preg_match('/^(?<values>'.$number.'(?:\s*[x×]\s*'.$number.')*)\s*(?<unit>(?![xX]$)[a-zA-Zµ]+)?$/u', $value, $matches) !== 1) {
+            return ['value' => $value, 'values' => [$value], 'unit' => $unit];
         }
 
-        $parts = preg_split('/\s*[x×]\s*/u', $value) ?: [$value];
-        $parts = array_values(array_filter(array_map($this->clean(...), $parts)));
+        $value = $matches['values'];
+        $unit = $this->clean($matches['unit'] ?? null) ?? $unit;
 
         return [
-            'values' => $parts === [] ? [$value] : $parts,
+            'value' => $value,
+            'values' => preg_split('/\s*[x×]\s*/u', $value) ?: [$value],
             'unit' => $unit,
         ];
     }

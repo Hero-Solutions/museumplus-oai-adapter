@@ -122,6 +122,17 @@ uit het Axiell-woordenboek als `production.period/notes`, in dezelfde taalvolgor
 Voor onbekende periodes worden geen vertalingen verzonnen.
 Herbouw na uitrol de opgeslagen records en laat de pipeline opnieuw ophalen.
 
+Samengestelde afmetingen worden in alle vier de sets opgesplitst: bijvoorbeeld
+`Hoogte x Breedte` met `12 x 15` wordt `hoogte = 12` en `breedte = 15`.
+Eenheid, onderdeel, precisie en notities blijven bij de afmetingen. Als de types
+en waarden niet overeenkomen, blijft de oorspronkelijke combinatie behouden.
+
+Materiaalvertalingen uit `material.fr` en `material.en` krijgen voorrang op de
+Axiell-referenties. MSK en VKC ontvangen ze als `material/notes`: eerst Frans,
+dan Engels. Een ontbrekende taal houdt een lege plaats; vrije `material.notes`
+blijven apart. Brugge en Mu.ZEE behouden hun platte materiaalveld. Techniek heeft
+in de huidige MuseumPlus-export nog geen Franse of Engelse bronvelden.
+
 Raw responses staan in `var/museumplus-raw/`: één ongewijzigde `.xml` per poging,
 met `.json` voor positie, status en checksum. Foutantwoorden blijven beschikbaar
 tot de volgende importpoging; overgeslagen ongeldige objecten blijven ook in

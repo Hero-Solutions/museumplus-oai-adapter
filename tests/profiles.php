@@ -136,4 +136,63 @@ foreach (['11 x 20 cm (hxb)','10 x 20 mm (hxb)','10 x 20 cm','10 x 20 cm (hxb), 
 }
 [$x] = mapped(['DimensionTxt'=>$dimension.$dimension.'<dimension.free>10 x 20 cm (hxb)</dimension.free>']);
 check($x->evaluate('count(/record/Dimension)') === 2.0, 'Free dimensions assigned to an arbitrary repeated group.');
+
+// Production export examples: SM001028 (Mu.ZEE) and 2023-GC (MSK).
+$dimensions = '<Dimension><dimension.type>Hoogte x Breedte</dimension.type><dimension.value>12 x 15</dimension.value><dimension.unit>cm</dimension.unit><dimension.part>plaat</dimension.part><dimension.precision>exact</dimension.precision><dimension.notes>zonder kader</dimension.notes></Dimension>'
+    .'<Dimension><dimension.type>Hoogte x Breedte x Diepte</dimension.type><dimension.value>21 x 18.1 x 3.9</dimension.value><dimension.unit>cm</dimension.unit><dimension.part>geheel</dimension.part></Dimension>'
+    .'<Dimension><dimension.type>Diameter</dimension.type><dimension.value>8</dimension.value><dimension.unit>mm</dimension.unit><dimension.part>lijst</dimension.part><dimension.precision>circa</dimension.precision></Dimension>'
+    .'<dimension.free>12 x 15 cm (hxb)</dimension.free>';
+foreach (AxiellProfile::cases() as $profile) {
+    [$x] = mapped(['DimensionTxt'=>$dimensions], $profile);
+    check($x->evaluate('count(/record/Dimension)') === 6.0, 'Wrong dimension count for '.$profile->value);
+    $expected = [
+        ['hoogte', '12', 'cm', 'plaat', 'exact', 'zonder kader'],
+        ['breedte', '15', 'cm', 'plaat', 'exact', 'zonder kader'],
+        ['hoogte', '21', 'cm', 'geheel', '', ''],
+        ['breedte', '18.1', 'cm', 'geheel', '', ''],
+        ['diepte', '3.9', 'cm', 'geheel', '', ''],
+        ['diameter', '8', 'mm', 'lijst', 'circa', ''],
+    ];
+    foreach ($expected as $index => $row) {
+        foreach (['type','value','unit','part','precision','notes'] as $column => $field) {
+            check($x->evaluate('string(/record/Dimension['.($index + 1).']/dimension.'.$field.')') === $row[$column], 'Dimension '.$field.' changed or moved to another part in '.$profile->value);
+        }
+    }
+    check($x->evaluate('string(/record/dimension.free)') === '12 x 15 cm (hxb)', 'Free-text dimension changed.');
+}
+echo "PASS: compound dimensions in all four sets retain their axes, values, units and source-group context\n";
+
+$normalizer = new App\Normalizer\DimensionNormalizer();
+foreach ([
+    ['Breedte x Hoogte', '15 x 12', ['breedte','hoogte'], ['15','12']],
+    [' Diameter × Hoogte ', '0 × 12,5', ['diameter','hoogte'], ['0','12,5']],
+    ['Hoogte x Breedte x Diepte', '0 x 20 x 0', ['hoogte','breedte','diepte'], ['0','20','0']],
+    ['Hoogte', '-5', ['hoogte'], ['-5']],
+    ['afmetingen object', '10 x 20', ['hoogte','breedte'], ['10','20']],
+    [null, '10 x 20', ['hoogte','breedte'], ['10','20']],
+] as [$type, $value, $types, $values]) {
+    $result = $normalizer->normalize([$value], ['cm'], ['beeld'], $type);
+    check(array_column($result, 'type') === $types && array_column($result, 'value') === $values, 'Incorrect dimension order, zero or decimal value: '.$value);
+}
+foreach (['Hoogte','Breedte','Diepte','Diameter','Dikte','Lengte','Gewicht'] as $type) {
+    check($normalizer->normalize(['8'], type: $type)[0]['type'] === strtolower($type), 'Single type does not match Catmandu: '.$type);
+}
+$result = $normalizer->normalize(['10 x 20 mm'], ['cm'], type: 'Hoogte x Breedte');
+check(array_column($result, 'value') === ['10','20'] && array_column($result, 'unit') === ['mm','mm'], 'Explicit trailing unit lost.');
+foreach ([
+    ['Hoogte x Breedte', '10 x 20 x 30'],
+    ['Hoogte x Breedte x Diepte', '10 x 20'],
+    ['Hoogte x Breedte x Diepte', '10 x x 20'],
+    ['Hoogte x Breedte', '10 x'],
+    ['Hoogte x Breedte', '10 x onbekend'],
+    ['hoogte', '10 x 20'],
+    ['Onbekend type', '10 x 20'],
+    [null, 'extra groot'],
+    [null, 'ca. 10 min. (projectie)'],
+] as [$type, $value]) {
+    check($normalizer->normalize([$value], ['cm'], ['beeld'], $type) === [
+        ['type'=>$type, 'value'=>$value, 'unit'=>'cm', 'part'=>'beeld'],
+    ], 'Ambiguous dimension was split or text was lost: '.$value);
+}
+echo "PASS: explicit dimension order, zeros, decimals and legacy formats; ambiguous measurements remain intact\n";
 echo "PASS: four mapping profiles, source grouping, title fallback, explicit fields and overlapping publication selection\n";
