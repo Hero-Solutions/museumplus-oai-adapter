@@ -57,3 +57,38 @@ file_put_contents($blocked, 'existing file');
 $noRequest = new MockHttpClient(static fn () => throw new LogicException('A request must not be sent'));
 fails(fn () => (new RawResponseArchive($blocked))->capture($noRequest, $url, $options, $context), 'Cannot create raw archive directory');
 echo "PASS: byte-exact bodies, hashes, private metadata, immutable retries, HTTP/transport evidence, integrity checks and storage failure before fetching\n";
+
+$archive = App\Tests\Support\temporaryRawArchive();
+$active = $archive->capture(new MockHttpClient(new MockResponse($body)), $url, $options, $context);
+$pending = $archive->capture(new MockHttpClient(new MockResponse($body.'<!-- next -->')), $url, $options, $context);
+$obsolete = $archive->capture(new MockHttpClient(new MockResponse($body)), $url, $options, $context);
+$failed = $archive->capture(new MockHttpClient(new MockResponse('denied', ['http_code'=>403])), $url, $options, $context);
+$directory = $archive->directory();
+$orphan = $directory.'/20200101T000000Z-0000000000000000.xml';
+file_put_contents($orphan, 'incomplete capture without metadata');
+file_put_contents($directory.'/offset-000000000000.xml', 'legacy dump');
+file_put_contents($directory.'/manifest.jsonl', 'legacy manifest');
+foreach (['notes.txt', 'unrelated.xml', 'unrelated.json'] as $name) file_put_contents($directory.'/'.$name, 'keep');
+$nested = $directory.'/20200101T000000Z-1111111111111111.xml';
+mkdir($nested);
+file_put_contents($nested.'/keep.xml', 'nested content');
+$linked = $directory.'/20200101T000000Z-2222222222222222.xml';
+$hasLink = @symlink($directory.'/notes.txt', $linked);
+try {
+    fails(fn () => $archive->prune(['../escape']), 'Invalid raw response ID');
+    check(is_file($orphan), 'Invalid retained IDs allowed deletion before validation.');
+    check($archive->prune([$active['id'], $pending['id']]) === 7, 'Unexpected obsolete file count.');
+    check($archive->read($active['id']) === $body && $archive->read($pending['id']) === $body.'<!-- next -->', 'Pruning changed a published or staged source.');
+    foreach ([$obsolete['id'], $failed['id']] as $id) foreach (['xml','json'] as $extension) check(!file_exists($directory.'/'.$id.'.'.$extension), 'Obsolete response survived.');
+    foreach (['notes.txt', 'unrelated.xml', 'unrelated.json'] as $name) check(file_get_contents($directory.'/'.$name) === 'keep', 'Unrelated file deleted.');
+    check(file_get_contents($nested.'/keep.xml') === 'nested content', 'Pruning entered a subdirectory.');
+    if ($hasLink) check(is_link($linked), 'Pruning followed or removed a symbolic link.');
+    check($archive->prune([$pending['id']]) === 2, 'Old active source was not removed after publication.');
+    check($archive->prune([$pending['id']]) === 0, 'Pruning was not repeatable.');
+    check($archive->read($pending['id']) === $body.'<!-- next -->', 'Current source lost after repeated pruning.');
+} finally {
+    if ($hasLink) unlink($linked);
+    unlink($nested.'/keep.xml');
+    rmdir($nested);
+}
+echo "PASS: pruning keeps exact active/staged sources, removes obsolete and legacy dumps, and leaves unrelated files, directories and links alone\n";

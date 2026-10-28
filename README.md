@@ -17,7 +17,7 @@ Dit hervat een onvoltooide import of begint een nieuwe volledige ronde.
 De huidige OAI-dataset blijft beschikbaar totdat de nieuwe import klaar is.
 
 - `--resume`: alleen hervatten; na voltooiing gebeurt niets meer.
-- `--restart`: tijdelijke import wissen en bij nul beginnen. Bestaande OAI-records blijven beschikbaar tot de nieuwe import klaar is. Raw bestanden worden nooit gewist.
+- `--restart`: tijdelijke import wissen en bij nul beginnen. Bestaande OAI-records en hun raw bronnen blijven beschikbaar tot de nieuwe import klaar is.
 - `--batch-size=1000`: aantal bronobjecten per aanvraag; standaard 1000.
 
 Bij een storing blijft de voortgang bewaard. Ongeldige XML wordt waar mogelijk
@@ -123,12 +123,22 @@ Voor onbekende periodes worden geen vertalingen verzonnen.
 Herbouw na uitrol de opgeslagen records en laat de pipeline opnieuw ophalen.
 
 Raw responses staan in `var/museumplus-raw/`: één ongewijzigde `.xml` per poging,
-met `.json` voor positie, status en checksum. Ook foutantwoorden blijven bewaard.
+met `.json` voor positie, status en checksum. Foutantwoorden blijven beschikbaar
+tot de volgende importpoging; overgeslagen ongeldige objecten blijven ook in
+`museumplus_import_errors` bewaard.
 De database verwijst naar deze bestanden via `raw_response_id`. Maak de map
 blijvend en schrijfbaar, en neem XML én JSON mee in de databaseback-up.
 De locatie staat in `config/services.yaml` bij `museumplus.raw_directory`.
-Er is geen automatische verwijdering. Oude records zonder raw koppeling gebruiken
-bij heropbouwen hun opgeslagen `museumplus_xml`; die is niet byte-exact.
+Bij het starten of hervatten en na publicatie verwijdert de import automatisch
+raw bestanden waarnaar noch `records` noch `records_import` verwijst. Na een
+geslaagde import blijven dus alleen de responses voor de nieuwe dataset over.
+Tijdens het ophalen is ruimte nodig voor de actieve én de nieuwe dataset.
+Ook oude `offset-*.xml`-dumps en hun `manifest.jsonl` worden opgeruimd; andere
+bestanden, submappen en symbolische links blijven staan. Een opruimfout geeft een
+waarschuwing; een geslaagde publicatie wordt niet teruggedraaid. Met `--resume`
+kan je de opruiming ook na een voltooide import opnieuw laten proberen.
+Oude records zonder raw koppeling gebruiken bij heropbouwen hun opgeslagen
+`museumplus_xml`; die is niet byte-exact.
 
 Bij uitrol voert de operator ontbrekende migraties uit:
 `php bin/console doctrine:migrations:migrate --no-interaction`.

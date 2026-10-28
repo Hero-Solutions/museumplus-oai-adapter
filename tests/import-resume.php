@@ -63,7 +63,7 @@ function database(): MemoryImportConnection
 }
 
 /** A fresh command and HTTP client simulate a new process using the saved database. */
-function runImport(MemoryImportConnection $db, callable $factory, array $options = [], ?string $expectedError = null, ?App\Import\RawResponseArchive $archive = null): array
+function runImport(MemoryImportConnection $db, callable $factory, array $options = [], ?string $expectedError = null, ?App\Import\RawResponseArchive $archive = null, ?string &$display = null): array
 {
     global $testArchive;
     $requests = [];
@@ -101,6 +101,7 @@ function runImport(MemoryImportConnection $db, callable $factory, array $options
         check($error !== null && str_contains($error->getMessage(), $expectedError), 'Expected '.$expectedError.'; got '.($error?->getMessage() ?? 'success'));
     }
 
+    $display = $tester->getDisplay();
     return $requests;
 }
 
@@ -496,6 +497,7 @@ check(array_keys($db->tables['records']) === ['test:old'] && $db->tables['record
 echo "PASS: full import retains known Axiell identities in both views; collisions roll back the batch\n";
 
 // The raw response is the byte-exact source; mapped Object XML is only a convenience copy.
+$testArchive = App\Tests\Support\temporaryRawArchive();
 $db = database();
 $body = "<?xml version='1.0' encoding='UTF-8'?>\r\n<ObjectList>\r\n";
 foreach (['Musea Brugge','Museum voor Schone Kunsten Gent','Mu.ZEE, Kunstmuseum aan zee'] as $i=>$museum) {
@@ -542,5 +544,50 @@ runImport($db, static fn (): MockResponse => batch(['3']), ['--resume'=>true]);
 check($db->tables['records']['test:1']['raw_response_id'] === $firstRaw && $testArchive->read($firstRaw) === $original, 'Resume or publication changed the earlier raw source.');
 check($db->tables['records']['test:3']['raw_response_id'] !== $firstRaw, 'Resumed batch reused the earlier capture.');
 runImport($db, static fn (): MockResponse => batch(['4']), ['--restart'=>true]);
-check($testArchive->read($firstRaw) === $original, 'Restart deleted the preceding import archive.');
-echo "PASS: resume and publication retain raw links; restart preserves earlier archives\n";
+check(!file_exists($testArchive->directory().'/'.$firstRaw.'.xml'), 'Successful restart retained the preceding import archive.');
+check(count(glob($testArchive->directory().'/*.xml')) === 1, 'Successful restart kept more than the active raw dataset.');
+echo "PASS: resume preserves raw links; successful replacement removes the preceding raw dataset\n";
+
+$testArchive = App\Tests\Support\temporaryRawArchive();
+$db = database();
+runImport($db, static fn (): MockResponse => batch(['1']));
+$oldRaw = $db->tables['records']['test:1']['raw_response_id'];
+$oldBody = $testArchive->read($oldRaw);
+runImport($db, static function (int $offset) use ($testArchive, $oldRaw, $oldBody): MockResponse {
+    check($testArchive->read($oldRaw) === $oldBody, 'Starting a replacement removed the active source.');
+    return $offset === 0 ? batch(['1','2']) : new MockResponse('denied', ['http_code'=>401]);
+}, ['--batch-size'=>'2'], 'HTTP 401');
+$pendingRaw = $db->tables['records_import']['test:1']['raw_response_id'];
+$pendingBody = $testArchive->read($pendingRaw);
+check($oldRaw !== $pendingRaw && $testArchive->read($oldRaw) === $oldBody, 'Failed replacement damaged active raw data.');
+runImport($db, static function () use ($testArchive, $oldRaw, $oldBody, $pendingRaw, $pendingBody): MockResponse {
+    check($testArchive->read($oldRaw) === $oldBody && $testArchive->read($pendingRaw) === $pendingBody, 'Resume pruned active/staged sources for the same object ID.');
+    return batch(['3']);
+}, ['--resume'=>true]);
+check(!file_exists($testArchive->directory().'/'.$oldRaw.'.xml') && $testArchive->read($pendingRaw) === $pendingBody, 'Publication removed the wrong source generation.');
+check(count(glob($testArchive->directory().'/*.xml')) === 2, 'A completed replacement kept error responses or old sources.');
+
+runImport($db, static fn (int $offset): MockResponse => $offset === 0 ? batch(['4']) : new MockResponse('denied', ['http_code'=>401]), ['--restart'=>true, '--batch-size'=>'1'], 'HTTP 401');
+$discardedRaw = $db->tables['records_import']['test:4']['raw_response_id'];
+runImport($db, static function () use ($testArchive, $pendingRaw, $pendingBody, $discardedRaw): MockResponse {
+    check(!file_exists($testArchive->directory().'/'.$discardedRaw.'.xml'), 'Restart kept discarded staging sources.');
+    check($testArchive->read($pendingRaw) === $pendingBody, 'Restart pruned a still-active source.');
+    return batch(['5']);
+}, ['--restart'=>true]);
+check(count(glob($testArchive->directory().'/*.xml')) === 1, 'Restart did not replace the full raw dataset.');
+echo "PASS: failed replacement and resume keep both generations; restart drops discarded staging only; publication retains just the new sources\n";
+
+// Cleanup errors are warnings, including after a successful atomic publication.
+$oldRaw = $db->tables['records']['test:5']['raw_response_id'];
+runImport($db, static function () use ($db): MockResponse {
+    $db->failRawReferences = true;
+    return batch(['6']);
+}, display: $display);
+check(str_contains($display, 'Could not finish raw response cleanup'), 'Cleanup failure was not reported.');
+check($db->tables['museumplus_import_state'][1]['status'] === 'completed' && isset($db->tables['records']['test:6']), 'Cleanup failure undid publication.');
+check(file_exists($testArchive->directory().'/'.$oldRaw.'.xml'), 'Failed reference query deleted files.');
+$db->failRawReferences = false;
+$renames = $db->renames;
+check(runImport($db, noFetch(...), ['--resume'=>true]) === [], 'Retrying cleanup made a new request.');
+check($db->renames === $renames && !file_exists($testArchive->directory().'/'.$oldRaw.'.xml'), 'Cleanup retry republished or retained old raw files.');
+echo "PASS: cleanup failures cannot undo publication; completed resume retries cleanup without fetching or swapping\n";

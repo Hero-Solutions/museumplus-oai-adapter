@@ -97,6 +97,36 @@ final class RawResponseArchive
         return $this->directory;
     }
 
+    /**
+     * Keep sources used by published or staged records. Call under the import lock.
+     * Only known response files in this directory are removed; never follow links.
+     *
+     * @param list<string> $retainedIds
+     */
+    public function prune(array $retainedIds): int
+    {
+        foreach ($retainedIds as $id) $this->path($id, 'xml');
+        $retained = array_fill_keys($retainedIds, true);
+        $directory = realpath($this->directory);
+        if ($directory === false || !is_dir($directory)) return 0;
+
+        $removed = 0;
+        foreach (new \DirectoryIterator($directory) as $file) {
+            if ($file->isLink() || !$file->isFile()) continue;
+            $name = $file->getFilename();
+            if (preg_match('/^(\d{8}T\d{6}Z-[a-f0-9]{16})\.(xml|json)$/D', $name, $match)) {
+                if (isset($retained[$match[1]])) continue;
+            } elseif ($name !== 'manifest.jsonl' && !preg_match('/^offset-\d{12}\.xml$/D', $name)) {
+                continue;
+            }
+
+            if (!@unlink($file->getPathname())) throw new RuntimeException('Cannot remove old raw response file: '.$name);
+            ++$removed;
+        }
+
+        return $removed;
+    }
+
     private function path(string $id, string $extension): string
     {
         if (!preg_match('/^\d{8}T\d{6}Z-[a-f0-9]{16}$/D', $id)) throw new RuntimeException('Invalid raw response ID.');

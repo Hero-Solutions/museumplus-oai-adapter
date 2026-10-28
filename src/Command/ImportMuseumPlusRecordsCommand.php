@@ -101,6 +101,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
             $io->writeln('Clearing records_import with TRUNCATE before restarting. This can wait for existing database locks.');
         }
         $state = $progress->prepare($sourceHash, $resume, $restart);
+        $this->pruneRawResponses($io);
         if ($state['status'] === 'completed') {
             $io->success('This import has already been published. No records were fetched or swapped.');
 
@@ -230,6 +231,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         }
 
         $progress->publish();
+        $this->pruneRawResponses($io);
 
         $io->success(sprintf(
             'Processed %d source positions. Published %d records. Skipped %d records (missing ID or invalid XML). Invalid fragments: %d.',
@@ -240,6 +242,22 @@ final class ImportMuseumPlusRecordsCommand extends Command
         ));
 
         return Command::SUCCESS;
+    }
+
+    private function pruneRawResponses(SymfonyStyle $io): void
+    {
+        try {
+            $ids = $this->connection->fetchFirstColumn(<<<'SQL'
+                SELECT raw_response_id FROM records WHERE raw_response_id IS NOT NULL AND raw_response_id <> ''
+                UNION
+                SELECT raw_response_id FROM records_import WHERE raw_response_id IS NOT NULL AND raw_response_id <> ''
+                SQL);
+            $removed = $this->rawArchive->prune($ids);
+            if ($removed > 0) $io->writeln(sprintf('Removed %d obsolete raw response files.', $removed));
+        } catch (\Throwable $error) {
+            // A cleanup failure must never undo publication or discard the checkpoint.
+            $io->warning('Could not finish raw response cleanup: '.$error->getMessage());
+        }
     }
 
     /**

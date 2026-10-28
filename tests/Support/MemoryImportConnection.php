@@ -26,6 +26,7 @@ final class MemoryImportConnection extends Connection
     public array $statements = [];
     public ?\Closure $beforeRebuildInsert = null;
     public ?string $failStatement = null;
+    public bool $failRawReferences = false;
     private ?array $snapshot = null;
 
     public function __construct()
@@ -102,6 +103,19 @@ final class MemoryImportConnection extends Connection
         }
 
         throw new RuntimeException('Unexpected fetchAssociative: '.$query);
+    }
+
+    public function fetchFirstColumn(string $query, array $params = [], array $types = []): array
+    {
+        $query = preg_replace('/\s+/', ' ', trim($query));
+        if ($query !== "SELECT raw_response_id FROM records WHERE raw_response_id IS NOT NULL AND raw_response_id <> '' UNION SELECT raw_response_id FROM records_import WHERE raw_response_id IS NOT NULL AND raw_response_id <> ''") {
+            throw new RuntimeException('Unexpected fetchFirstColumn: '.$query);
+        }
+        if (!$this->locked) throw new RuntimeException('Raw cleanup requires the import lock.');
+        if ($this->failRawReferences) throw new RuntimeException('Simulated raw reference query failure');
+
+        $rows = [...array_values($this->tables['records']), ...array_values($this->tables['records_import'])];
+        return array_values(array_unique(array_filter(array_column($rows, 'raw_response_id'))));
     }
 
     public function fetchAllAssociative(string $query, array $params = [], array $types = []): array
