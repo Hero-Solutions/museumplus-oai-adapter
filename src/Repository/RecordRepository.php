@@ -31,7 +31,7 @@ final class RecordRepository extends ServiceEntityRepository implements HarvestR
 
     public function findEarliestDatestamp(): ?DateTimeImmutable
     {
-        return ($this->findForHarvest(null, null, null, 1, 0)[0] ?? null)?->getDatestamp();
+        return $this->findHeadersForHarvest(null, null, null, 1, 0)[0]['datestamp'] ?? null;
     }
 
     /**
@@ -43,26 +43,22 @@ final class RecordRepository extends ServiceEntityRepository implements HarvestR
     }
 
     /**
-     * @return list<Record>
+     * @return list<array{axiellPriref: string|null, datestamp: DateTimeImmutable, xml: string|null}>
      */
     public function findForHarvest(
         ?DateTimeImmutable $from,
         ?DateTimeImmutable $until,
-        ?string $setSpec,
+        string $setSpec,
         int $limit,
         int $offset,
     ): array {
-        $queryBuilder = $this->filteredHarvestQuery($from, $until, $setSpec)
-            ->orderBy('r.datestamp', 'ASC')
-            ->addOrderBy('r.id', 'ASC')
-            ->setMaxResults($limit)
-            ->setFirstResult($offset);
+        $xmlColumn = $setSpec === 'vkc' ? 'r.oai_xml' : 'r.oai_xml_native';
 
-        return $queryBuilder->getQuery()->getResult();
+        return $this->harvestPage($from, $until, $setSpec, $limit, $offset, $xmlColumn);
     }
 
     /**
-     * @return list<array{oaiIdentifier: string, axiellPriref: string|null, datestamp: DateTimeImmutable, setSpecs: list<string>}>
+     * @return list<array{axiellPriref: string|null, datestamp: DateTimeImmutable}>
      */
     public function findHeadersForHarvest(
         ?DateTimeImmutable $from,
@@ -71,36 +67,54 @@ final class RecordRepository extends ServiceEntityRepository implements HarvestR
         int $limit,
         int $offset,
     ): array {
-        $queryBuilder = $this->getEntityManager()->getConnection()->createQueryBuilder()
-            ->select('r.oai_identifier', 'r.axiell_priref', 'r.datestamp', ...array_map(static fn (string $field): string => 'r.'.$field, array_values(Record::PUBLICATION_COLUMNS)))
+        return $this->harvestPage($from, $until, $setSpec, $limit, $offset);
+    }
+
+    private function harvestPage(
+        ?DateTimeImmutable $from,
+        ?DateTimeImmutable $until,
+        ?string $setSpec,
+        int $limit,
+        int $offset,
+        ?string $xmlColumn = null,
+    ): array {
+        $connection = $this->getEntityManager()->getConnection();
+        // Keep OFFSET on the narrow index scan. Read payloads only for the selected IDs.
+        // One statement also keeps both steps on the same table during an import swap.
+        $page = $connection->createQueryBuilder()
+            ->select('r.id')
             ->from('records', 'r')
+            ->where(self::publicationCondition($setSpec, Record::PUBLICATION_COLUMNS))
             ->orderBy('r.datestamp', 'ASC')
             ->addOrderBy('r.id', 'ASC')
             ->setMaxResults($limit)
             ->setFirstResult($offset);
 
         if ($from !== null) {
-            $queryBuilder
+            $page
                 ->andWhere('r.datestamp >= :from')
                 ->setParameter('from', $from->format('Y-m-d H:i:s'));
         }
 
         if ($until !== null) {
-            $queryBuilder
+            $page
                 ->andWhere('r.datestamp <= :until')
                 ->setParameter('until', $until->format('Y-m-d H:i:s'));
         }
 
-        $queryBuilder->andWhere(self::publicationCondition($setSpec, Record::PUBLICATION_COLUMNS));
-
-        $rows = $queryBuilder->fetchAllAssociative();
+        $columns = 'r.axiell_priref, r.datestamp';
+        if ($xmlColumn !== null) $columns .= ', '.$xmlColumn.' AS xml';
+        $rows = $connection->fetchAllAssociative(
+            'SELECT '.$columns.' FROM records r INNER JOIN ('.$page->getSQL().') page ON page.id = r.id ORDER BY r.datestamp ASC, r.id ASC',
+            $page->getParameters(),
+            $page->getParameterTypes(),
+        );
 
         return array_map(
             static fn (array $row): array => [
-                'oaiIdentifier' => (string) $row['oai_identifier'],
                 'axiellPriref' => $row['axiell_priref'],
                 'datestamp' => new DateTimeImmutable((string) $row['datestamp'], new DateTimeZone('UTC')),
-                'setSpecs' => array_keys(array_filter(Record::PUBLICATION_COLUMNS, static fn (string $column): bool => (bool) $row[$column])),
+                ...($xmlColumn === null ? [] : ['xml' => $row['xml']]),
             ],
             $rows,
         );

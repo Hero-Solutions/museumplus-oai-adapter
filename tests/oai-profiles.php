@@ -26,20 +26,28 @@ final class FixtureRepository implements HarvestRepository
     }
     public function findEarliestDatestamp(): ?DateTimeImmutable { return new DateTimeImmutable('2026-10-16T00:00:00Z'); }
     public function findSetSpecs(): array { return array_values(array_filter(array_keys(Record::PUBLICATION_FIELDS), fn(string $set): bool => $this->countForHarvest(null, null, $set) > 0)); }
-    public function findForHarvest(?DateTimeImmutable $from, ?DateTimeImmutable $until, ?string $setSpec, int $limit, int $offset): array
+    private function matchingRecords(?DateTimeImmutable $from, ?DateTimeImmutable $until, ?string $setSpec, int $limit, int $offset): array
     {
         $records = array_values(array_filter($this->records, static fn (Record $record): bool => $record->getSetSpecs() !== []
             && ($setSpec === null || in_array($setSpec, $record->getSetSpecs(), true))
             && ($from === null || $record->getDatestamp() >= $from) && ($until === null || $record->getDatestamp() <= $until)));
         return array_slice($records, $offset, $limit);
     }
+    public function findForHarvest(?DateTimeImmutable $from, ?DateTimeImmutable $until, string $setSpec, int $limit, int $offset): array
+    {
+        return array_map(static fn(Record $record): array => [
+            'axiellPriref' => $record->getAxiellPriref(),
+            'datestamp' => $record->getDatestamp(),
+            'xml' => $setSpec === 'vkc' ? $record->getOaiXml() : $record->getOaiXmlNative(),
+        ], $this->matchingRecords($from, $until, $setSpec, $limit, $offset));
+    }
     public function findHeadersForHarvest(?DateTimeImmutable $from, ?DateTimeImmutable $until, ?string $setSpec, int $limit, int $offset): array
     {
-        return array_map(static fn(Record $record): array => ['oaiIdentifier'=>$record->getOaiIdentifier(),'axiellPriref'=>$record->getAxiellPriref(),'datestamp'=>$record->getDatestamp(),'setSpecs'=>$record->getSetSpecs()], $this->findForHarvest($from,$until,$setSpec,$limit,$offset));
+        return array_map(static fn(Record $record): array => ['axiellPriref'=>$record->getAxiellPriref(),'datestamp'=>$record->getDatestamp()], $this->matchingRecords($from,$until,$setSpec,$limit,$offset));
     }
     public function countForHarvest(?DateTimeImmutable $from, ?DateTimeImmutable $until, ?string $setSpec): int
     {
-        return count($this->findForHarvest($from,$until,$setSpec,PHP_INT_MAX,0));
+        return count($this->matchingRecords($from,$until,$setSpec,PHP_INT_MAX,0));
     }
 }
 

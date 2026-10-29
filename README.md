@@ -73,6 +73,11 @@ Volg daarna de `resumptionToken` met alleen dezelfde `verb` en de token.
 Ook `Identify`, `ListSets`, `ListMetadataFormats` en `ListIdentifiers` zijn beschikbaar.
 GET, POST en datumfilters worden ondersteund.
 
+De paginering selecteert eerst de pagina-ID's via de database-index en haalt in
+dezelfde query alleen de benodigde XML-versie voor die pagina op. `ListIdentifiers`
+leest alleen de headers. Volgorde, identifiers en resumptionTokens blijven gelijk;
+deze optimalisatie vereist geen migratie, import of heropbouw.
+
 Een gecontroleerde match met de oude Axiell-export behoudt de bestaande priref.
 Anders wordt het MuseumPlus-ID gebruikt. Voor herkende instellingen bepaalt
 `WebPublicationTxt/webpublication` de ontsluiting:
@@ -172,7 +177,7 @@ ook als de eerdere migraties al geregistreerd zijn. Bestaande gegevens blijven b
 
 ## Lokaal testen
 
-`php -n -d allow_url_fopen=0 tests/run.php` draait tien suites met lokale fixtures
+`php -n -d allow_url_fopen=0 tests/run.php` draait elf suites met lokale fixtures
 en mocks, zonder applicatiekernel, echte database of API-aanvragen.
 
 De losse dump/exportcommando’s, gedeeltelijke importopties en ongebruikte

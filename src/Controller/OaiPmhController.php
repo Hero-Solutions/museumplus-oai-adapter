@@ -135,7 +135,7 @@ final class OaiPmhController
             $remaining = self::PAGE_SIZE - $pageCount;
             if ($includeMetadata) {
                 $records = $this->records->findForHarvest($state['from'], $state['until'], $set, $remaining, $offset);
-                foreach ($records as $record) $this->appendRecord($list, $record, $profile);
+                foreach ($records as $record) $this->appendRecordValues($list, $record['axiellPriref'], $record['datestamp'], $profile, $record['xml']);
                 $pageCount += count($records);
             } else {
                 $headers = $this->records->findHeadersForHarvest($state['from'], $state['until'], $set, $remaining, $offset);
@@ -160,9 +160,14 @@ final class OaiPmhController
     {
         if (!in_array($profile->value, $record->getSetSpecs(), true)) throw new OaiPmhException('cannotDisseminateFormat', 'This record is not published in the requested profile.');
         $xml = $profile === AxiellProfile::Vkc ? $record->getOaiXml() : $record->getOaiXmlNative();
+        $this->appendRecordValues($parent, $record->getAxiellPriref(), $record->getDatestamp(), $profile, $xml);
+    }
+
+    private function appendRecordValues(DOMElement $parent, ?string $priref, DateTimeImmutable $datestamp, AxiellProfile $profile, ?string $xml): void
+    {
         if ($xml === null) throw new OaiPmhException('cannotDisseminateFormat', 'The requested profile must first be rebuilt.');
         $element = $this->appendElement($parent, 'record');
-        $this->appendHeaderValues($element, $this->publicIdentifier($record->getAxiellPriref(), $profile), $record->getDatestamp(), [$profile->value]);
+        $this->appendHeaderValues($element, $this->publicIdentifier($priref, $profile), $datestamp, [$profile->value]);
         $metadata = $this->appendElement($element, 'metadata');
         $metadata->appendChild($this->loadPayload($metadata->ownerDocument, $xml));
     }
