@@ -8,43 +8,26 @@ use RuntimeException;
 
 final class MuseumPlusSearch
 {
+    public const FIELD_PATH = 'ObjWebPublicationGrp.WebPublicationVoc';
+
     /** @return list<string> */
-    public static function parseOrgUnits(string $value): array
+    public static function parsePublicationIds(string $value): array
     {
-        if (trim($value) === '') {
-            return [];
-        }
-
-        $orgUnits = preg_split('/[\s,]+/', trim($value), -1, PREG_SPLIT_NO_EMPTY);
-        if (!$orgUnits) {
-            throw new RuntimeException('MUSEUMPLUS_ORG_UNITS must contain organisation codes or be empty.');
-        }
-
-        $orgUnits = array_values(array_unique($orgUnits));
-        sort($orgUnits, SORT_STRING);
-
-        return $orgUnits;
+        return self::validateIds(preg_split('/[\s,]+/', trim($value), -1, PREG_SPLIT_NO_EMPTY) ?: []);
     }
 
-    /** @param list<string> $orgUnits */
-    public static function xml(string $fieldPath, string $operand, int $limit, int $offset, array $orgUnits = []): string
+    /** @param list<string> $publicationIds */
+    public static function xml(array $publicationIds, int $limit, int $offset): string
     {
-        $criterion = sprintf(
-            '<equalsField fieldPath="%s" operand="%s"/>',
-            self::escape($fieldPath),
-            self::escape($operand),
-        );
-
-        if ($orgUnits !== []) {
-            $organisations = array_map(
-                static fn (string $orgUnit): string => sprintf(
-                    '<equalsField fieldPath="__orgUnit" operand="%s"/>',
-                    self::escape($orgUnit),
-                ),
-                $orgUnits,
-            );
-            $criterion = '<and>'.$criterion.'<or>'.implode('', $organisations).'</or></and>';
+        $publicationIds = self::validateIds($publicationIds);
+        if ($limit < 1 || $offset < 0) {
+            throw new RuntimeException('MuseumPlus pagination requires a positive limit and a non-negative offset.');
         }
+        $criteria = array_map(
+            static fn (string $id): string => sprintf('<equalsField fieldPath="%s" operand="%s"/>', self::FIELD_PATH, $id),
+            $publicationIds,
+        );
+        $criterion = count($criteria) === 1 ? $criteria[0] : '<or>'.implode('', $criteria).'</or>';
 
         return <<<XML
             <?xml version="1.0" encoding="UTF-8"?>
@@ -60,8 +43,22 @@ final class MuseumPlusSearch
             XML;
     }
 
-    private static function escape(string $value): string
+    /** @param list<string> $ids
+     *  @return list<string>
+     */
+    private static function validateIds(array $ids): array
     {
-        return htmlspecialchars($value, ENT_QUOTES | ENT_XML1, 'UTF-8');
+        if ($ids === []) {
+            throw new RuntimeException('MUSEUMPLUS_WEBPUBLICATION_IDS must contain at least one positive numeric ID.');
+        }
+        foreach ($ids as $id) {
+            if (!is_string($id) || preg_match('/^[1-9][0-9]*$/D', $id) !== 1) {
+                throw new RuntimeException('MUSEUMPLUS_WEBPUBLICATION_IDS must contain positive numeric IDs, separated by commas or whitespace.');
+            }
+        }
+        $ids = array_values(array_unique($ids));
+        sort($ids, SORT_STRING);
+
+        return $ids;
     }
 }

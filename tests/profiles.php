@@ -115,7 +115,7 @@ check($selector->select($record('Museum voor Schone Kunsten Gent','NEW-TEST',['E
 check($selector->select($record('Musea Brugge','S-40',['Extranet'])) === ['musea_brugge'], 'Inventory collision changed institution routing.');
 check($selector->select($record('Stad Oostende','TEST',['Extranet'])) === ['muzee'], 'Related institution omitted.');
 check($selector->select($record('Groeningemuseum','LP000G03',['Extranet'])) === ['musea_brugge'], 'Confirmed Groeningemuseum routing lost.');
-check($selector->select(new RecordValues('test','LP000G03',$bothFlags + ['Naam_bewaarinstelling::institution.name'=>['Groeningemuseum'],'__orgUnit'=>['org_32_GroeningemuseumMuZee']],[],[],[])) === ['muzee','vkc'], 'Explicit organisation unit must precede the fallback label.');
+check($selector->select(new RecordValues('test','LP000G03',$bothFlags + ['Naam_bewaarinstelling::institution.name'=>['Groeningemuseum'],'__orgUnit'=>['org_32_TestMuseum']],[],[],[])) === ['muzee','vkc'], 'Explicit organisation unit must precede the fallback label.');
 check($selector->select($record('Unlisted museum','TEST',['Extranet','VKC datahub'])) === [], 'Unknown institution guessed from flags.');
 check($selector->select(new RecordValues('25842813','1949-AU-9-verso',[])) === [], 'Record override bypassed publication flags.');
 check($selector->select(new RecordValues('25842813','1949-AU-9-verso',$bothFlags)) === ['mskObj','vkc'], 'Locally verified record without institution lost.');

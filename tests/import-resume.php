@@ -31,9 +31,7 @@ $_ENV = [
     'MUSEUMPLUS_EXPORT_URL' => 'https://museumplus.invalid/export',
     'MUSEUMPLUS_USERNAME' => 'fake-user',
     'MUSEUMPLUS_PASSWORD' => 'fake-password',
-    'MUSEUMPLUS_SEARCH_FIELD_PATH' => 'test.field',
-    'MUSEUMPLUS_SEARCH_OPERAND' => 'test-value',
-    'MUSEUMPLUS_ORG_UNITS' => '',
+    'MUSEUMPLUS_WEBPUBLICATION_IDS' => '101',
     'MUSEUMPLUS_OAI_IDENTIFIER_PREFIX' => 'test:',
     'MUSEUMPLUS_DEFAULT_SET_SPEC' => 'test',
     'MUSEUMPLUS_TIMEOUT_SECONDS' => '1',
@@ -154,9 +152,9 @@ fwrite(STDOUT, "PASS: failure halfway through saving a batch is atomic\n");
 
 $db = interruptedImport();
 $saved = $db->tables;
-$_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'different-filter';
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '202';
 runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
-$_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'test-value';
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '101';
 runImport($db, static fn (): MockResponse => new MockResponse('<html><body>Offline</body></html>'), ['--resume' => true], 'Expected an ObjectList');
 runImport($db, static fn (): MockResponse => new MockResponse('<ObjectList><Object>'), ['--resume' => true], 'Could not parse');
 check($db->tables === $saved, 'Bad configuration or invalid XML changed saved data.');
@@ -173,28 +171,37 @@ runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
 check($db->tables['museumplus_import_state'][1]['source_hash'] === $legacyHash, 'Refusal modified the old checkpoint.');
 $db->tables = $newState;
 $saved = $db->tables;
-$_ENV['MUSEUMPLUS_ORG_UNITS'] = 'org_1_TestMuseum,org_2_OtherMuseum';
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '101,202';
 runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
-check($db->tables === $saved, 'Adding an organisation filter changed the old checkpoint.');
+check($db->tables === $saved, 'Adding a publication flag changed the old checkpoint.');
 
 $db = interruptedImport();
 $saved = $db->tables;
-foreach (['org_1_TestMuseum', 'org_1_TestMuseum,org_3_ThirdMuseum', ''] as $changedSelection) {
-    $_ENV['MUSEUMPLUS_ORG_UNITS'] = $changedSelection;
+foreach (['101', '101,303', '202'] as $changedSelection) {
+    $_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = $changedSelection;
     runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
-    check($db->tables === $saved, 'Changing or removing the organisation filter changed saved data.');
+    check($db->tables === $saved, 'Changing the publication filter changed saved data.');
 }
-$_ENV['MUSEUMPLUS_ORG_UNITS'] = "\norg_2_OtherMuseum\r\n  org_1_TestMuseum, org_2_OtherMuseum\n";
+foreach (['', ', ,', '101,Extranet', '0', '101,"/><or>'] as $invalid) {
+    $_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = $invalid;
+    runImport($db, noFetch(...), ['--restart' => true], 'MUSEUMPLUS_WEBPUBLICATION_IDS');
+    check($db->tables === $saved, 'Invalid publication IDs modified the checkpoint or staging.');
+}
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = "\n202\r\n  101, 202\n";
+// Leftover legacy settings must never restrict the new publication filter.
+$_ENV['MUSEUMPLUS_ORG_UNITS'] = 'org_1_TestMuseum';
+$_ENV['MUSEUMPLUS_SEARCH_FIELD_PATH'] = 'ObjCategoryVoc';
+$_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = '999';
 $requests = runImport($db, static function (int $offset, int $limit, string $body): MockResponse {
-    check(str_contains($body, '<and><equalsField fieldPath="test.field" operand="test-value"/><or>'), 'Category and organisations were not combined with AND/OR.');
-    check(substr_count($body, 'fieldPath="__orgUnit"') === 2, 'The import omitted or duplicated an organisation.');
-    check(str_contains($body, 'operand="org_1_TestMuseum"') && str_contains($body, 'operand="org_2_OtherMuseum"'), 'The import used the wrong organisations.');
+    check(str_contains($body, '<expert><or><equalsField fieldPath="ObjWebPublicationGrp.WebPublicationVoc" operand="101"/><equalsField fieldPath="ObjWebPublicationGrp.WebPublicationVoc" operand="202"/></or></expert>'), 'The import did not OR the publication flags.');
+    check(!str_contains($body, '__orgUnit') && !str_contains($body, 'ObjCategoryVoc'), 'Old filters restricted the new publication selection.');
 
     return batch(['3']);
 }, ['--resume' => true]);
-check($requests === [[2, 1000]], 'Reordering or repeating organisation codes prevented a safe resume.');
-$_ENV['MUSEUMPLUS_ORG_UNITS'] = '';
-fwrite(STDOUT, "PASS: old mapping checkpoints refused; organisation filters reach the export; selection changes block resume, formatting changes preserve it\n");
+check($requests === [[2, 1000]], 'Reordering or repeating publication IDs prevented a safe resume.');
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '101';
+unset($_ENV['MUSEUMPLUS_ORG_UNITS'], $_ENV['MUSEUMPLUS_SEARCH_FIELD_PATH'], $_ENV['MUSEUMPLUS_SEARCH_OPERAND']);
+fwrite(STDOUT, "PASS: publication OR filter reaches the export; changed selections block resume; invalid IDs preserve staging; legacy filters are ignored\n");
 
 $db = database();
 $newExport = file_get_contents(__DIR__.'/fixtures/museumplus-priref.xml');
@@ -258,7 +265,7 @@ fwrite(STDOUT, "PASS: unversioned legacy staging preserved and refused before an
 $db = interruptedImport();
 $scans = $db->importScans;
 $truncates = $db->importTruncates;
-$_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'new-export-filter';
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '303';
 $requests = runImport($db, static function () use ($db, $scans, $truncates): MockResponse {
     check($db->importScans === $scans, 'Restart scanned the old staging table before discarding it.');
     check($db->importTruncates === $truncates + 1 && $db->tables['records_import'] === [], 'Restart did not truncate staging before fetching.');
@@ -267,7 +274,7 @@ $requests = runImport($db, static function () use ($db, $scans, $truncates): Moc
 
     return batch(['9']);
 }, ['--restart' => true]);
-$_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = 'test-value';
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '101';
 check($requests === [[0, 1000]] && array_keys($db->tables['records']) === ['test:9'], 'Explicit restart did not reset the staging import.');
 fwrite(STDOUT, "PASS: explicit restart truncates without scanning, accepts a changed source and starts from zero\n");
 

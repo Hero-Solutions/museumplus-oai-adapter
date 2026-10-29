@@ -85,9 +85,10 @@ Anders wordt het MuseumPlus-ID gebruikt. Voor herkende instellingen bepaalt
 | Geen van beide | Geen OAI-records en geen gemapte XML |
 
 Hoofdletters en omringende spaties maken geen verschil; andere waarden geven
-geen publicatierecht. Alle bronrecords blijven bewaard. Onbekende instellingen
-worden niet ontsloten, ook niet met een publicatievlag. De MuseumPlus-aanvraag
-filtert niet op deze vlaggen.
+geen publicatierecht. Alle opgehaalde bronrecords blijven bewaard. Onbekende
+instellingen worden niet ontsloten, ook niet met een publicatievlag.
+De MuseumPlus-aanvraag selecteert de ingestelde webpublicatie-ID's met OF;
+deze controle bepaalt vervolgens welke OAI-versies elk opgehaald object krijgt.
 
 Na uitrol van deze regel: herbouw met `app:rebuild-museumplus-records --replace`.
 Tot die heropbouw voltooid is, blijft de eerder opgeslagen settoewijzing actief.
@@ -98,17 +99,29 @@ eerder doorgestuurde records verdwijnen hierdoor niet automatisch uit de Datahub
 ## Configuratie en bewaren
 
 PHP 8.4+, Composer-afhankelijkheden en MySQL/MariaDB zijn nodig.
-De webserver gebruikt `public/` als documentroot. Pas bestaande omgevingsinstellingen
-zelf aan; voor deze opschoning zijn geen nieuwe variabelen nodig.
+De webserver gebruikt `public/` als documentroot. Beheer de omgevingsinstellingen
+via Ansible of pas ze zelf aan op de bedoelde omgeving.
 
 | Instelling | Doel |
 | --- | --- |
 | `DATABASE_URL` | Databaseverbinding |
 | `MUSEUMPLUS_EXPORT_URL`, `MUSEUMPLUS_USERNAME`, `MUSEUMPLUS_PASSWORD` | Export en aanmelding |
-| `MUSEUMPLUS_SEARCH_FIELD_PATH`, `MUSEUMPLUS_SEARCH_OPERAND` | Basisfilter, bijvoorbeeld `ObjCategoryVoc` en de bijbehorende code |
-| `MUSEUMPLUS_ORG_UNITS` | Organisatiecodes, gescheiden door komma’s of nieuwe regels; leeg betekent geen organisatiefilter |
+| `MUSEUMPLUS_WEBPUBLICATION_IDS` | Verplichte lijst positieve numerieke webpublicatie-ID's, gescheiden door komma's of witruimte; selectie met OF |
 | `MUSEUMPLUS_TIMEOUT_SECONDS` | Timeout per aanvraag |
 | `MUSEUMPLUS_OAI_IDENTIFIER_PREFIX`, `MUSEUMPLUS_DEFAULT_SET_SPEC` | Interne opslagwaarden; bepalen de publieke identifiers niet |
+
+De REST-filter gebruikt vast `ObjWebPublicationGrp.WebPublicationVoc`.
+`MUSEUMPLUS_SEARCH_FIELD_PATH`, `MUSEUMPLUS_SEARCH_OPERAND` en
+`MUSEUMPLUS_ORG_UNITS` worden niet meer gebruikt en mogen uit de configuratie.
+Een lege of ongeldige ID-lijst stopt de import; er is geen ongefilterde terugval.
+
+Stel de ID's voor VKC datahub en Extranet in via de hostconfiguratie, onder
+`museumplus_oai_adapter.museumplus.webpublication_ids`. Ansible zet deze lijst
+om naar `MUSEUMPLUS_WEBPUBLICATION_IDS`.
+Een lijst over meerdere regels binnen aanhalingstekens werkt ook. De volgorde
+en dubbele ID's veranderen de selectie niet. Na deze filterwijziging: voer zelf
+`php bin/console app:import-museumplus-records --restart --env=prod` uit.
+Heropbouwen haalt ontbrekende bronrecords niet alsnog op.
 
 Instellingsgroepen staan in `config/museum-groups.php`. Bewaar en deploy ook
 `config/axiell-reference.json` en `config/axiell-reference.jsonl`: deze behouden

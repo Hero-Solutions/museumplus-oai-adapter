@@ -80,21 +80,16 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $url = $this->env('MUSEUMPLUS_EXPORT_URL');
         $username = $this->env('MUSEUMPLUS_USERNAME');
         $password = $this->env('MUSEUMPLUS_PASSWORD');
-        $searchFieldPath = $this->env('MUSEUMPLUS_SEARCH_FIELD_PATH');
-        $searchOperand = $this->env('MUSEUMPLUS_SEARCH_OPERAND');
-        $orgUnits = MuseumPlusSearch::parseOrgUnits($this->env('MUSEUMPLUS_ORG_UNITS', ''));
+        $publicationIds = MuseumPlusSearch::parsePublicationIds($this->env('MUSEUMPLUS_WEBPUBLICATION_IDS'));
         $identifierPrefix = $this->env('MUSEUMPLUS_OAI_IDENTIFIER_PREFIX');
         $defaultSetSpec = $this->env('MUSEUMPLUS_DEFAULT_SET_SPEC');
         $timeout = $this->positiveIntEnv('MUSEUMPLUS_TIMEOUT_SECONDS');
 
         $io->title('MuseumPlus import');
 
-        $sourceSettings = [$url, $searchFieldPath, $searchOperand, $identifierPrefix, $defaultSetSpec];
+        $sourceSettings = [$url, MuseumPlusSearch::FIELD_PATH, $publicationIds, $identifierPrefix, $defaultSetSpec];
         // Never publish a mix of old conversions and new profiles after a resume.
         $sourceSettings[] = $this->recordBuilder->mappingVersion();
-        if ($orgUnits !== []) {
-            $sourceSettings[] = $orgUnits;
-        }
         $sourceHash = hash('sha256', json_encode($sourceSettings, JSON_THROW_ON_ERROR));
 
         if ($restart) {
@@ -132,15 +127,13 @@ final class ImportMuseumPlusRecordsCommand extends Command
                     url: $url,
                     username: $username,
                     password: $password,
-                    searchFieldPath: $searchFieldPath,
-                    searchOperand: $searchOperand,
+                    publicationIds: $publicationIds,
                     limit: $limit,
                     offset: $offset,
                     timeout: $timeout,
                     io: $io,
                     sourceHash: $sourceHash,
                     importDatestamp: $datestamp->format('Y-m-d H:i:s'),
-                    orgUnits: $orgUnits,
                 );
             } catch (InvalidMuseumPlusResponse $error) {
                 if ($error->museumplusId() === null) {
@@ -303,22 +296,20 @@ final class ImportMuseumPlusRecordsCommand extends Command
     }
 
     /**
-     * @param list<string> $orgUnits
+     * @param list<string> $publicationIds
      * @return list<MuseumPlusParsedRecord>
      */
     private function fetchBatch(
         string $url,
         string $username,
         string $password,
-        string $searchFieldPath,
-        string $searchOperand,
+        array $publicationIds,
         int $limit,
         int $offset,
         int $timeout,
         SymfonyStyle $io,
         string $sourceHash,
         string $importDatestamp,
-        array $orgUnits = [],
     ): array {
         for ($attempt = 1; ; ++$attempt) {
             $exception = null;
@@ -331,7 +322,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
                         'Content-Type' => 'application/xml',
                         'Accept-Encoding' => 'identity',
                     ],
-                    'body' => MuseumPlusSearch::xml($searchFieldPath, $searchOperand, $limit, $offset, $orgUnits),
+                    'body' => MuseumPlusSearch::xml($publicationIds, $limit, $offset),
                     'timeout' => $timeout,
                     'buffer' => false,
                     'max_redirects' => 0,
