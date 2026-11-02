@@ -13,20 +13,33 @@ Voer de beheercommando’s zelf uit op de bedoelde omgeving, vanuit deze project
 php bin/console app:import-museumplus-records
 ```
 
-Dit hervat een onvoltooide import of begint een nieuwe volledige ronde.
+Dit hervat een onvoltooide import met dezelfde instellingen en mappingversie,
+of begint een nieuwe volledige ronde. Bij gewijzigde instellingen of mapping
+begint het automatisch opnieuw vanaf nul. De reden verschijnt in het log.
 De huidige OAI-dataset blijft beschikbaar totdat de nieuwe import klaar is.
 
-- `--resume`: alleen hervatten; na voltooiing gebeurt niets meer.
+- `--resume`: alleen hervatten; ontbrekende of onbruikbare voortgang geeft een fout. Na voltooiing gebeurt niets meer.
 - `--restart`: tijdelijke import wissen en bij nul beginnen. Bestaande OAI-records en hun raw bronnen blijven beschikbaar tot de nieuwe import klaar is.
 - `--batch-size=1000`: aantal bronobjecten per aanvraag; standaard 1000.
 
 Bij een storing blijft de voortgang bewaard. Ongeldige XML wordt waar mogelijk
 tot één object geïsoleerd; overgeslagen objecten staan in `museumplus_import_errors`.
-Een lege import wordt niet gepubliceerd. Gewijzigde bronfilters of mappingversies
-vereisen een nieuwe ronde met `--restart`.
+Een lege import wordt niet gepubliceerd. De volgende standaardrun probeert
+opnieuw vanaf nul. Dat gebeurt ook na een onderbroken reset, bij ontbrekende
+voortgang of wanneer de tijdelijke records niet meer bij de voortgang passen.
+Alleen de tijdelijke import wordt gewist; er worden nooit verschillende
+mappingversies samengevoegd.
+
+Voor een dagelijkse cronjob gebruik je het commando zonder `--resume`:
+
+```cron
+0 8 * * * cd /opt/museumplus-oai-adapter && php bin/console app:import-museumplus-records --no-interaction >> /opt/.repos/museumplus-oai-adapter/shared/log/import.log 2>&1
+```
 
 Een bestaande cronjob met `bin/resume-import.sh` blijft bruikbaar. Dit script
-hervat met `--resume` en schrijft naar `~/museumplus-import.log`.
+hervat met `--resume` en schrijft naar `~/museumplus-import.log`. Het is bedoeld
+om één bestaande import af te werken, niet voor dagelijkse verversing of
+automatisch herstarten na een mappingwijziging.
 
 ## Heropbouwen na een mappingwijziging
 
@@ -128,8 +141,9 @@ Stel de ID's voor VKC datahub en Extranet in via de hostconfiguratie, onder
 `museumplus_oai_adapter.museumplus.webpublication_ids`. Ansible zet deze lijst
 om naar `MUSEUMPLUS_WEBPUBLICATION_IDS`.
 Een lijst over meerdere regels binnen aanhalingstekens werkt ook. De volgorde
-en dubbele ID's veranderen de selectie niet. Na deze filterwijziging: voer zelf
-`php bin/console app:import-museumplus-records --restart --env=prod` uit.
+en dubbele ID's veranderen de selectie niet. Na een filterwijziging begint de
+volgende standaardimport automatisch opnieuw. Voor een onmiddellijke import
+voer je zelf `php bin/console app:import-museumplus-records --env=prod` uit.
 Heropbouwen haalt ontbrekende bronrecords niet alsnog op.
 
 Instellingsgroepen staan in `config/museum-groups.php`. Bewaar en deploy ook

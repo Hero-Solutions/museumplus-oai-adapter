@@ -47,7 +47,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
     {
         $this
             ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'MuseumPlus fetch size.', '1000')
-            ->addOption('resume', null, InputOption::VALUE_NONE, 'Resume an existing full import; fail if none exists. Incomplete imports also resume automatically without this flag.')
+            ->addOption('resume', null, InputOption::VALUE_NONE, 'Only resume an existing compatible import; fail if missing or unusable. Without this flag, unusable progress restarts automatically.')
             ->addOption('restart', null, InputOption::VALUE_NONE, 'Discard staging progress and start over from zero; keep published records and raw files.');
     }
 
@@ -95,7 +95,9 @@ final class ImportMuseumPlusRecordsCommand extends Command
         if ($restart) {
             $io->writeln('Clearing records_import with TRUNCATE before restarting. This can wait for existing database locks.');
         }
-        $state = $progress->prepare($sourceHash, $resume, $restart);
+        $state = $progress->prepare($sourceHash, $resume, $restart, static function (string $message) use ($io): void {
+            $io->warning($message);
+        });
         $this->pruneRawResponses($io);
         if ($state['status'] === 'completed') {
             $io->success('This import has already been published. No records were fetched or swapped.');
@@ -107,7 +109,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $skipped = (int) $state['skipped'];
         $invalidFragments = (int) $state['invalid_fragments'];
         $datestamp = new DateTimeImmutable($state['datestamp'], new DateTimeZone('UTC'));
-        $io->note(sprintf('Full import checkpoint: offset %d, %d records already stored. Re-run with --resume after an interruption.', $offset, $stored));
+        $io->note(sprintf('Full import checkpoint: offset %d, %d records already stored. Re-run the same command after an interruption.', $offset, $stored));
 
         // Resume a run of invalid objects with a single request per position.
         $currentBatchSize = (int) ($state['consecutive_invalid'] ?? 0) > 0 ? 1 : $batchSize;

@@ -31,29 +31,35 @@ final class MuseumPlusImportState
         $this->connection->fetchOne("SELECT RELEASE_LOCK(CONCAT('museumplus-import:', LEFT(SHA2(DATABASE(), 256), 32)))");
     }
 
-    /** @return array<string, int|string> */
-    public function prepare(string $sourceHash, bool $resume, bool $restart): array
+    /**
+     * @param (callable(string): void)|null $onRestart
+     * @return array<string, int|string>
+     */
+    public function prepare(string $sourceHash, bool $resume, bool $restart, ?callable $onRestart = null): array
     {
         $state = $this->connection->fetchAssociative('SELECT * FROM '.self::TABLE.' WHERE id = 1');
+        $restartReason = null;
 
         if ($state !== false && !$restart && ($state['status'] !== 'completed' || $resume)) {
-            if ($state['status'] === 'resetting') {
-                throw new RuntimeException('Import reset was interrupted. Run again with --restart to finish clearing records_import and start from zero.');
-            }
-
-            if (!in_array($state['status'], ['fetching', 'ready', 'completed'], true)) {
+            if (!in_array($state['status'], ['resetting', 'fetching', 'ready', 'completed'], true)) {
                 throw new RuntimeException('Unknown import checkpoint status. Refusing to fetch or publish.');
             }
 
-            if ($state['source_hash'] !== $sourceHash) {
-                throw new RuntimeException('Import settings changed. Restore the original source/filter settings or explicitly use --restart.');
+            if ($state['status'] === 'resetting') {
+                $restartReason = 'Import reset was interrupted.';
+            } elseif ($state['source_hash'] !== $sourceHash) {
+                $restartReason = 'Import settings changed (source/filter or mapping version).';
+            } elseif ($state['status'] !== 'completed' && (int) $this->connection->fetchOne('SELECT COUNT(*) FROM records_import') !== (int) $state['stored']) {
+                $restartReason = 'records_import does not match the saved checkpoint.';
+            } elseif ($state['status'] === 'ready' && (int) $state['stored'] === 0) {
+                $restartReason = 'Previous import returned zero records.';
+            } else {
+                return $state;
             }
 
-            if ($state['status'] !== 'completed' && (int) $this->connection->fetchOne('SELECT COUNT(*) FROM records_import') !== (int) $state['stored']) {
-                throw new RuntimeException('records_import does not match the saved checkpoint. Refusing to skip records or publish an incomplete import.');
+            if ($resume) {
+                throw new RuntimeException($restartReason.' Run without --resume to restart automatically, or explicitly use --restart.');
             }
-
-            return $state;
         }
 
         $datestamp = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
@@ -62,7 +68,11 @@ final class MuseumPlusImportState
             // Without the checkpoint we cannot establish the mapping/profile version.
             throw new RuntimeException('No saved checkpoint. The saved mapping version cannot be verified. Rebuild saved XML separately, or explicitly restart the import. records_import was preserved.');
         } elseif (!$restart && $state === false && (int) $this->connection->fetchOne('SELECT COUNT(*) FROM records_import') > 0) {
-            throw new RuntimeException('records_import already contains data without a checkpoint. Rebuild saved XML separately, or explicitly use --restart to discard staging and fetch again.');
+            $restartReason = 'records_import contains data without a checkpoint.';
+        }
+
+        if ($restartReason !== null && $onRestart !== null) {
+            $onRestart($restartReason.' Restarting automatically from offset 0; clearing records_import. Published records remain available.');
         }
 
         $newState = [
