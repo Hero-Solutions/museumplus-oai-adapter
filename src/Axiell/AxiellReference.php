@@ -104,6 +104,12 @@ final class AxiellReference
                 }
             }
             $result[] = new AxiellElement($element->name, $element->value, $children, $element->attributes);
+            if ($profile === AxiellProfile::Muzee && $path === 'object_category' && $element->value !== null) {
+                // The native Mu.ZEE fix pairs categories with their old Axiell authority IDs.
+                // Empty positions keep an unknown category from borrowing the next known ID.
+                $id = $this->lookup('category_refs', 'muzee|'.self::clean($element->value));
+                $result[] = new AxiellElement('object_category.lref', $id ?? '');
+            }
         }
         return $result;
     }

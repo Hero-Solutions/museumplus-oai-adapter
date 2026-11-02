@@ -15,7 +15,7 @@ function type(string $code, string $nl): array {
         leaf('value', $code, ['lang'=>'neutral']), leaf('value', 'English label', ['lang'=>'0']), leaf('value', $nl, ['lang'=>'1']),
     ],'attributes'=>[]];
 }
-function mapFixture(AxiellReference $reference, string $id = '123', string $number = 'REF-1', string $institution = 'Musea Brugge', string $materialNote = 'olieverf op doek', string $type = 'eigen afgebeeld object', AxiellProfile $profile = AxiellProfile::Vkc, ?string $materials = null): DOMXPath {
+function mapFixture(AxiellReference $reference, string $id = '123', string $number = 'REF-1', string $institution = 'Musea Brugge', string $materialNote = 'olieverf op doek', string $type = 'eigen afgebeeld object', AxiellProfile $profile = AxiellProfile::Vkc, ?string $materials = null, ?string $categories = null): DOMXPath {
     $fields = [
         'NumberTxt'=>'<object_number>'.$number.'</object_number>',
         'MuseumTxt'=>'<institution.name>'.$institution.'</institution.name>',
@@ -23,6 +23,7 @@ function mapFixture(AxiellReference $reference, string $id = '123', string $numb
         'ContentSubjectTxt'=>'<Content_subject><content.subject>Voorwerp</content.subject><content.subject.type>'.$type.'</content.subject.type></Content_subject>',
         'ContentDateTxt'=>'<content.date.period>Parijs</content.date.period><content.date.period>19de eeuw</content.date.period>',
     ];
+    if ($categories !== null) $fields['ObjectCategoryTxt'] = $categories;
     $source = '<ObjectList><Object><priref>'.$id.'</priref>';
     foreach ($fields as $field=>$fragment) $source .= '<'.$field.'>'.htmlspecialchars($fragment, ENT_XML1|ENT_QUOTES, 'UTF-8').'</'.$field.'>';
     $record = (new MuseumPlusExportParser(new XmlValueExtractor()))->parse($source.'</Object></ObjectList>')[0];
@@ -43,6 +44,8 @@ $entries = [
     'enums:content.subject.type|onderwerp'=>type('SUBJECT','onderwerp')['children'],
     'records:vkc|999'=>['number'=>'CONFLICT','institution'=>'Musea Brugge','priref'=>'40'],
     'records:musea_brugge|999'=>['number'=>'CONFLICT','institution'=>'Musea Brugge','priref'=>'41'],
+    'category_refs:muzee|testcategorie A'=>'test-authority-a',
+    'category_refs:muzee|testcategorie B'=>'test-authority-b',
 ];
 $lines = ''; $index = [];
 foreach ($entries as $key=>$entry) { $index[$key] = strlen($lines); $lines .= json_encode($entry, JSON_THROW_ON_ERROR)."\n"; }
@@ -50,6 +53,24 @@ file_put_contents($file.'l', $lines);
 file_put_contents($file, json_encode(['version'=>1,'sha256'=>hash('sha256',$lines),'index'=>$index], JSON_THROW_ON_ERROR));
 try {
     $reference = new AxiellReference($file);
+    $categories = '<Object_category><object_category>testcategorie A</object_category></Object_category>'
+        .'<Object_category><object_category>onbekende categorie</object_category></Object_category>'
+        .'<Object_category><object_category>testcategorie B</object_category><object_category.notes>Bronnotitie</object_category.notes></Object_category>';
+    foreach (AxiellProfile::cases() as $profile) {
+        $x = mapFixture($reference, profile: $profile, categories: $categories);
+        check($x->evaluate('count(/record/object_category)') === 3.0, 'Category disappeared during compatibility mapping.');
+        if ($profile !== AxiellProfile::Muzee) {
+            check($x->evaluate('count(/record/object_category.lref)') === 0.0, 'Mu.ZEE category references leaked into another profile.');
+            continue;
+        }
+        check($x->evaluate('count(/record/object_category.lref)') === 3.0, 'Mu.ZEE category/reference positions do not align.');
+        foreach (['test-authority-a', '', 'test-authority-b'] as $i=>$id) {
+            check($x->evaluate('string(/record/object_category.lref['.($i + 1).'])') === $id, 'Wrong or invented category reference.');
+        }
+        check($x->evaluate('string(/record/object_category[2])') === 'onbekende categorie', 'Unknown current category replaced by historical content.');
+        check($x->evaluate('string(/record/object_category.notes)') === 'Bronnotitie', 'Category note lost.');
+    }
+    check(mapFixture($reference, profile: AxiellProfile::Muzee)->evaluate('count(/record/object_category.lref)') === 0.0, 'Category reference emitted without a category.');
     $x = mapFixture($reference);
     check($x->evaluate('string(/record/priref)') === '42', 'Verified old priref not retained.');
     foreach (AxiellProfile::cases() as $profile) {
@@ -114,3 +135,4 @@ try {
 }
 echo "PASS: guarded reference identities, current-value preservation, subject recovery, enum attributes and terminology enrichment\n";
 echo "PASS: source material translations take precedence in MSK/VKC; language positions, optional fields, reference fallback and flat native profiles preserved\n";
+echo "PASS: Mu.ZEE category references retain Axiell pairing; unknown categories get no invented code; other profiles unchanged\n";

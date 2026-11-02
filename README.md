@@ -73,6 +73,10 @@ Volg daarna de `resumptionToken` met alleen dezelfde `verb` en de token.
 Ook `Identify`, `ListSets`, `ListMetadataFormats` en `ListIdentifiers` zijn beschikbaar.
 GET, POST en datumfilters worden ondersteund.
 
+De set `muzee` geeft bij bekende categorienamen ook de geverifieerde oude
+Axiell-categoriecode mee, zoals de bestaande Catmandu-fix verwacht. De naam komt
+uit MuseumPlus; bij een onbekende categorie blijft de code leeg.
+
 De paginering selecteert eerst de pagina-ID's via de database-index en haalt in
 dezelfde query alleen de benodigde XML-versie voor die pagina op. `ListIdentifiers`
 leest alleen de headers. Volgorde, identifiers en resumptionTokens blijven gelijk;
