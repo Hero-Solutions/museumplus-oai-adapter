@@ -86,9 +86,24 @@ Volg daarna de `resumptionToken` met alleen dezelfde `verb` en de token.
 Ook `Identify`, `ListSets`, `ListMetadataFormats` en `ListIdentifiers` zijn beschikbaar.
 GET, POST en datumfilters worden ondersteund.
 
-De set `muzee` geeft bij bekende categorienamen ook de geverifieerde oude
-Axiell-categoriecode mee, zoals de bestaande Catmandu-fix verwacht. De naam komt
-uit MuseumPlus; bij een onbekende categorie blijft de code leeg.
+Voor Brugge en Mu.ZEE krijgen categorieën, periodes, motieven en
+verwervingsmethodes waar beschikbaar hun geverifieerde Axiell-termverwijzing
+mee. Die koppelingen zijn nodig voor de bestaande fixes. De term komt uit
+MuseumPlus; bij onbekende of dubbelzinnige koppelingen blijft de verwijzing leeg.
+MSK-termen krijgen hun bekende FR/EN-vertalingen ook in de VKC-set.
+De materiaalbron en het termnummer uit MuseumPlus krijgen voorrang op de
+referentiedata. De adapter combineert geen nieuwe bron met een oude termcode.
+
+Vertaalde titels worden alleen opgenomen met een herkenbaar, eenduidig
+taallabel (NL/FR/EN/DE). Zonder bruikbaar label worden ze overgeslagen en gemeld;
+de adapter leidt de taal nooit af uit de positie. De Nederlandse hoofdtitel
+blijft behouden. Geboorte- en sterfteplaatsen blijven bij hun vervaardiger,
+objectrelaties bij hun bronverwijzing. Samengestelde afmetingen worden alleen
+opgesplitst wanneer types en waarden overeenkomen. Meerdere afmetingsteksten
+worden samengevoegd tot één displayveld, zonder de volgende tekst te verliezen.
+
+Nieuwe bronvelden vereisen een nieuwe import. Heropbouwen verwerkt alleen wat
+al in de opgeslagen raw XML aanwezig is.
 
 De paginering selecteert eerst de pagina-ID's via de database-index en haalt in
 dezelfde query alleen de benodigde XML-versie voor die pagina op. `ListIdentifiers`

@@ -35,6 +35,7 @@ enum AxiellProfile: string
         $nested = $this === self::Msk ? [
             'collection'=>'term', 'Technique/technique'=>'term', 'acquisition.method'=>'term', 'acquisition.place'=>'term', 'Acquisition_source/acquisition.source'=>'name',
             'Inscription/inscription.type'=>'term', 'Inscription/inscription.position'=>'term', 'Production/production.place'=>'term', 'school_style'=>'term',
+            'Related_object/related_object.association'=>'term',
             'Owner_history/owner_hist.acquired_from'=>'name', 'Owner_history/owner_hist.acquisition.method'=>'term', 'Owner_history/owner_hist.place'=>'term',
         ] : [];
         if ($this !== self::Msk) $flatPaths += ['collection'=>'term','Technique/technique'=>'term','acquisition.method'=>'term','acquisition.place'=>'term','Acquisition_source/acquisition.source'=>'name'];
@@ -50,6 +51,9 @@ enum AxiellProfile: string
                         $result[] = new AxiellElement($element->name, $child->value, $child->children);
                     } elseif ($child->name === 'object_category.notes') {
                         $result[] = $child;
+                    } elseif ($path === 'Material/material' && in_array($child->name, ['source', 'term.number', 'term.code'], true)) {
+                        // Keep the native scalar material expected by the fixes, plus its source metadata.
+                        $result[] = new AxiellElement('material.'.$child->name, $child->value, $child->children, $child->attributes);
                     }
                 }
                 continue;

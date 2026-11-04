@@ -13,7 +13,7 @@ $fields = [
     'MuseumTxt'=>'<institution.name>Musea Brugge</institution.name>',
     'NumberTxt'=>'<object_number>TEST-1</object_number>',
     'ObjectNameTxt'=>'<Object_name><object_name>schilderij</object_name></Object_name>',
-    'ObjectCategoryTxt'=>'<Object_category><object_category>schilderkunst</object_category></Object_category>',
+    'ObjectCategoryTxt'=>'<Object_category><object_category>Onbekende testcategorie</object_category></Object_category>',
     'ObjectCategoryUri'=>'<object_category.uri>https://vocabulary.invalid/123</object_category.uri>',
     'MaterialTxt'=>'<Material><material>doek</material><material.notes>Geen materiaalbeschrijving</material.notes></Material>',
     'physical_description'=>'Een fysieke omschrijving',
@@ -35,10 +35,10 @@ foreach (AxiellProfile::cases() as $profile) {
         check($x->evaluate('string(/record/'.$path.')') !== '', 'Field lost in '.$profile->value.': '.$path);
     }
     check($x->evaluate('count(/record/Production[creator/name="Maker B"]/creator.role)') === 0.0, 'Creator role shifted.');
-    check($x->evaluate('count(/record/Titel_translation)') === 3.0, 'Translation lost.');
-    check($x->evaluate('string(/record/Titel_translation[1]/title.language)') === 'Frans' && $x->evaluate('string(/record/Titel_translation[3]/title.language)') === 'Engels', 'Known language aliases not normalized.');
-    check($x->evaluate('count(/record/Titel_translation[2]/title.language)') === 0.0, 'Unlabelled translation inherited another language.');
-    check($x->evaluate('count(/record/Current_location/current_location/op)') === 3.0 && count($warnings) === 1, 'Public location split/validation failed.');
+    check($x->evaluate('count(/record/Titel_translation)') === 2.0, 'Unlabelled translation retained or labelled translation lost.');
+    check($x->evaluate('string(/record/Titel_translation[1]/title.language)') === 'Frans' && $x->evaluate('string(/record/Titel_translation[2]/title.language)') === 'Engels', 'Known language aliases not normalized.');
+    check($x->evaluate('count(/record/Titel_translation[title.translation="Unlabelled title"])') === 0.0, 'Unlabelled title would trigger a Catmandu position fallback.');
+    check($x->evaluate('count(/record/Current_location/current_location/op)') === 3.0 && count($warnings) === 2, 'Location or title omissions not reported.');
     check($x->evaluate('count(/record/Documentation)') === 2.0 && $x->evaluate('string(/record/Documentation[1]/documentation.title/Author/author.name)') === 'Auteur A', 'Documentation missing.');
     check($x->evaluate('count(/record/Documentation[2]/documentation.title/Author)') === 0.0, 'Documentation author shifted.');
     check($x->evaluate('string(/record/Documentation[2]/documentation.title/Publisher/year_of_publication)') === '2020', 'Publication year lost.');
@@ -54,7 +54,7 @@ foreach (AxiellProfile::cases() as $profile) {
 [$x] = mapped(['MaterialDescriptionTxt'=>'<material_description>olieverf op doek</material_description>'], AxiellProfile::Muzee);
 check($x->evaluate('string(/record/material_description)') === 'olieverf op doek', 'Explicit material description missing.');
 [$x] = mapped(['Vertaalde_titel'=>'<Title><title>Old export title</title><title.language>Onbekende taal</title.language></Title>']);
-check($x->evaluate('string(/record/Titel_translation/title.language)') === 'Onbekende taal', 'Old title fallback or unknown language lost.');
+check($x->evaluate('count(/record/Titel_translation)') === 0.0, 'Unknown legacy language would trigger a Catmandu fallback.');
 
 foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
     foreach (['Museum voor Schone Kunsten Gent', 'Sint-Baafskathedraal Gent'] as $institution) {
@@ -195,4 +195,4 @@ foreach ([
     ], 'Ambiguous dimension was split or text was lost: '.$value);
 }
 echo "PASS: explicit dimension order, zeros, decimals and legacy formats; ambiguous measurements remain intact\n";
-echo "PASS: four mapping profiles, source grouping, title fallback, explicit fields and overlapping publication selection\n";
+echo "PASS: four mapping profiles, source grouping, explicit title languages and overlapping publication selection\n";

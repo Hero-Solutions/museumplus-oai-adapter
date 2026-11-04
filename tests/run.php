@@ -6,7 +6,7 @@ declare(strict_types=1);
 // These suites use local files and mocks, without the application kernel or .env.
 $suites = [
     'import-schema',
-    'search-filter', 'xml-fragments', 'export-format', 'profiles',
+    'search-filter', 'xml-fragments', 'export-format', 'profiles', 'source-fields',
     'reference-mapping', 'raw-archive', 'rebuild-records', 'harvest-query', 'oai-profiles', 'import-resume',
 ];
 

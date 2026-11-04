@@ -15,7 +15,7 @@ function type(string $code, string $nl): array {
         leaf('value', $code, ['lang'=>'neutral']), leaf('value', 'English label', ['lang'=>'0']), leaf('value', $nl, ['lang'=>'1']),
     ],'attributes'=>[]];
 }
-function mapFixture(AxiellReference $reference, string $id = '123', string $number = 'REF-1', string $institution = 'Musea Brugge', string $materialNote = 'olieverf op doek', string $type = 'eigen afgebeeld object', AxiellProfile $profile = AxiellProfile::Vkc, ?string $materials = null, ?string $categories = null): DOMXPath {
+function mapFixture(AxiellReference $reference, string $id = '123', string $number = 'REF-1', string $institution = 'Musea Brugge', string $materialNote = 'olieverf op doek', string $type = 'eigen afgebeeld object', AxiellProfile $profile = AxiellProfile::Vkc, ?string $materials = null, ?string $categories = null, array $extraFields = []): DOMXPath {
     $fields = [
         'NumberTxt'=>'<object_number>'.$number.'</object_number>',
         'MuseumTxt'=>'<institution.name>'.$institution.'</institution.name>',
@@ -24,6 +24,7 @@ function mapFixture(AxiellReference $reference, string $id = '123', string $numb
         'ContentDateTxt'=>'<content.date.period>Parijs</content.date.period><content.date.period>19de eeuw</content.date.period>',
     ];
     if ($categories !== null) $fields['ObjectCategoryTxt'] = $categories;
+    $fields = array_replace($fields, $extraFields);
     $source = '<ObjectList><Object><priref>'.$id.'</priref>';
     foreach ($fields as $field=>$fragment) $source .= '<'.$field.'>'.htmlspecialchars($fragment, ENT_XML1|ENT_QUOTES, 'UTF-8').'</'.$field.'>';
     $record = (new MuseumPlusExportParser(new XmlValueExtractor()))->parse($source.'</Object></ObjectList>')[0];
@@ -39,14 +40,29 @@ $entries = [
         'types'=>['content.subject.type|Voorwerp'=>type('OBJECT','voorwerp')],
         'content_dates'=>['Parijs'=>['lref'=>'77','type'=>type('GEOKEYW','geografisch trefwoord')]],
         'material_description'=>['olieverf op doek']],
-    'terms:vkc|Material/material|doek'=>[leaf('notes','canvas')],
-    'terms:mskObj|Material/material|doek'=>[leaf('notes','ancienne traduction'), leaf('notes','old translation')],
+    'terms:vkc|Material/material|doek'=>[leaf('notes','canvas'), leaf('source','https://old.example.invalid/'), leaf('term.number','old-id')],
+    'terms:mskObj|Material/material|doek'=>[leaf('notes','ancienne traduction'), leaf('notes','old translation'), leaf('source','https://old.example.invalid/'), leaf('term.number','old-id')],
     'enums:content.subject.type|onderwerp'=>type('SUBJECT','onderwerp')['children'],
     'records:vkc|999'=>['number'=>'CONFLICT','institution'=>'Musea Brugge','priref'=>'40'],
     'records:musea_brugge|999'=>['number'=>'CONFLICT','institution'=>'Musea Brugge','priref'=>'41'],
-    'category_refs:muzee|testcategorie A'=>'test-authority-a',
-    'category_refs:muzee|testcategorie B'=>'test-authority-b',
+    'term_refs:muzee|object_category|testcategorie A'=>'test-authority-a',
+    'term_refs:muzee|object_category|testcategorie B'=>'test-authority-b',
+    'terms:mskObj|Production/creator.role|testrol'=>[leaf('notes','rôle test'), leaf('notes','test role')],
+    'terms:vkc|Production/creator.role|testrol'=>[leaf('notes','test role')],
+    'terms:mskObj|Production/creator/birth.place|Testplaats'=>[leaf('notes','Lieu test'), leaf('notes','Test place')],
 ];
+$pairedFields = [
+    'object_category'=>['ObjectCategoryTxt', 'Object_category'],
+    'production.period'=>['PeriodTxt', 'Production_period'],
+    'content.motif.general'=>['MotifGeneralTxt', null],
+    'content.motif.specific'=>['MotifSpecificTxt', null],
+    'acquisition.method'=>['AcquisitionTxt', 'Acquisition_source'],
+];
+foreach (['muzee', 'musea_brugge', 'vkc/muzee', 'vkc/musea_brugge'] as $scope) {
+    foreach ($pairedFields as $field=>$_) foreach (['A','B'] as $term) {
+        $entries['term_refs:'.$scope.'|'.$field.'|Testterm '.$term] = $scope.':'.$field.':'.$term;
+    }
+}
 $lines = ''; $index = [];
 foreach ($entries as $key=>$entry) { $index[$key] = strlen($lines); $lines .= json_encode($entry, JSON_THROW_ON_ERROR)."\n"; }
 file_put_contents($file.'l', $lines);
@@ -60,7 +76,7 @@ try {
         $x = mapFixture($reference, profile: $profile, categories: $categories);
         check($x->evaluate('count(/record/object_category)') === 3.0, 'Category disappeared during compatibility mapping.');
         if ($profile !== AxiellProfile::Muzee) {
-            check($x->evaluate('count(/record/object_category.lref)') === 0.0, 'Mu.ZEE category references leaked into another profile.');
+            check($x->evaluate('count(/record/object_category.lref[normalize-space()!=""])') === 0.0, 'Mu.ZEE category references leaked into another profile.');
             continue;
         }
         check($x->evaluate('count(/record/object_category.lref)') === 3.0, 'Mu.ZEE category/reference positions do not align.');
@@ -129,6 +145,47 @@ try {
             check($single->evaluate('string(/record/Material/material/notes[2])') === ($language === 'en' ? $translation : ''), 'Missing English slot was filled from stale reference data.');
         }
     }
+    foreach (['Mu.ZEE, Kunstmuseum aan zee'=>AxiellProfile::Muzee, 'Musea Brugge'=>AxiellProfile::Brugge] as $institution=>$museum) {
+        foreach ([$museum, AxiellProfile::Vkc] as $profile) {
+            $fields = [];
+            foreach ($pairedFields as $field=>[$exportField,$group]) {
+                $fields[$exportField] = '';
+                foreach (['Testterm A','Onbekende term','Testterm B'] as $label) {
+                    $fragment = '<'.$field.'>'.$label.'</'.$field.'>';
+                    $fields[$exportField] .= $group === null ? $fragment : '<'.$group.'>'.$fragment.'</'.$group.'>';
+                }
+            }
+            $x = mapFixture($reference, profile: $profile, institution: $institution, extraFields: $fields);
+            $scope = $profile === AxiellProfile::Vkc ? 'vkc/'.$museum->value : $museum->value;
+            foreach ($pairedFields as $field=>$_) {
+                check($x->evaluate('count(/record/'.$field.'.lref)') === 3.0, 'Parallel term-reference array lost a position: '.$scope.' '.$field);
+                foreach (['A',null,'B'] as $i=>$term) {
+                    $expected = $term === null ? '' : $scope.':'.$field.':'.$term;
+                    check($x->evaluate('string(/record/'.$field.'.lref['.($i+1).'])') === $expected, 'Authority reference shifted, guessed or borrowed from another museum/set.');
+                }
+                check($x->evaluate('count(/record/'.$field.'/term)') === ($profile === AxiellProfile::Vkc && $field !== 'acquisition.method' ? 3.0 : 0.0), 'Legacy native/VKC term shape changed.');
+            }
+        }
+    }
+    $creator = ['CreatorTxt'=>'<Production><creator>Testmaker</creator><creator.role>testrol</creator.role><birth.place>Testplaats</birth.place></Production>'];
+    foreach (AxiellProfile::cases() as $profile) {
+        $flat = in_array($profile, [AxiellProfile::Muzee,AxiellProfile::Brugge], true);
+        $prefix = $flat ? '/record/Material/material.' : '/record/Material/material/';
+        foreach ([['https://current.example.invalid/','current-id'], ['https://current.example.invalid/',''], ['', 'current-id']] as [$source,$id]) {
+            $material = '<Material><material>doek</material><material.source>'.$source.'</material.source><material.term.number>'.$id.'</material.term.number></Material>';
+            $x = mapFixture($reference, profile: $profile, institution: 'Museum voor Schone Kunsten Gent', materials: $material);
+            check($x->evaluate('string('.$prefix.'source)') === $source, 'Current material source lost or combined with an old identifier.');
+            check($x->evaluate('string('.$prefix.'term.number)') === $id, 'Current material identifier lost or combined with an old source.');
+            check($x->evaluate('count(/record/Material/material/term)') === ($flat ? 0.0 : 1.0), 'Material structure no longer matches the museum fix.');
+        }
+    }
+    foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
+        $x = mapFixture($reference, institution: 'Museum voor Schone Kunsten Gent', profile: $profile, extraFields: $creator);
+        check($x->evaluate('string(/record/Production/creator.role/notes[1])') === 'rôle test' && $x->evaluate('string(/record/Production/creator.role/notes[2])') === 'test role', 'MSK authority translations absent or reordered in VKC.');
+        check($x->evaluate('string(/record/Production/creator/birth.place/notes[1])') === 'Lieu test', 'Known birthplace metadata missing.');
+    }
+    $x = mapFixture($reference, institution: 'Musea Brugge', extraFields: $creator);
+    check($x->evaluate('count(/record/Production/creator/birth.place/notes)') === 0.0, 'MSK place translations leaked to Brugge.');
     unset($reference);
 } finally {
     unlink($file); unlink($file.'l');
@@ -136,3 +193,5 @@ try {
 echo "PASS: guarded reference identities, current-value preservation, subject recovery, enum attributes and terminology enrichment\n";
 echo "PASS: source material translations take precedence in MSK/VKC; language positions, optional fields, reference fallback and flat native profiles preserved\n";
 echo "PASS: Mu.ZEE category references retain Axiell pairing; unknown categories get no invented code; other profiles unchanged\n";
+echo "PASS: parallel term references scoped to museum and set, empty positions and MSK authority translations in VKC\n";
+echo "PASS: current material source/identifier pairs override frozen metadata without mixing vocabularies; flat native fields retained\n";

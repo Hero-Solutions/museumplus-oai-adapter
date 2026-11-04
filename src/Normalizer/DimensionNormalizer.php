@@ -35,6 +35,7 @@ final class DimensionNormalizer
     {
         $dimensions = [];
         $type = $this->clean($type);
+        if ($type !== null && strtolower($type) === 'tijd') $type = 'duur';
         $explicitTypes = $type === null ? [] : preg_split('/\s*[x×]\s*/u', strtolower($type));
         $knownTypes = $explicitTypes !== [] && array_diff($explicitTypes, self::TYPES) === [];
 

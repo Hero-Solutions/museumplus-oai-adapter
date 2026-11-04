@@ -89,26 +89,34 @@ final class AxiellReference
         return new AxiellElement($name, null, $children);
     }
 
-    public function enrich(array $elements, AxiellProfile $profile, string $parent = ''): array
+    public function enrich(array $elements, AxiellProfile $profile, string $parent = '', ?AxiellProfile $museum = null): array
     {
         $result = [];
         foreach ($elements as $element) {
             $path = $parent === '' ? $element->name : $parent.'/'.$element->name;
-            $children = $this->enrich($element->children, $profile, $path);
+            $children = $this->enrich($element->children, $profile, $path, $museum);
             $label = null;
             foreach ($children as $c) if (in_array($c->name, ['term','name'], true)) { $label = $c->value; break; }
             if ($label !== null) {
                 $existing = array_column($children, 'name');
+                $sourceFields = ['source', 'term.number', 'term.code'];
+                $hasSourceReference = array_intersect($existing, $sourceFields) !== [];
                 foreach ($this->lookup('terms', $profile->value.'|'.$path.'|'.self::clean($label)) ?? [] as $extra) {
+                    // Never combine a current vocabulary source with an old vocabulary ID, or vice versa.
+                    if ($hasSourceReference && in_array($extra['name'], $sourceFields, true)) continue;
                     if (!in_array($extra['name'], $existing, true)) $children[] = $this->element($extra);
                 }
             }
             $result[] = new AxiellElement($element->name, $element->value, $children, $element->attributes);
-            if ($profile === AxiellProfile::Muzee && $path === 'object_category' && $element->value !== null) {
-                // The native Mu.ZEE fix pairs categories with their old Axiell authority IDs.
-                // Empty positions keep an unknown category from borrowing the next known ID.
-                $id = $this->lookup('category_refs', 'muzee|'.self::clean($element->value));
-                $result[] = new AxiellElement('object_category.lref', $id ?? '');
+            $origin = $profile === AxiellProfile::Vkc ? $museum : $profile;
+            if (in_array($origin, [AxiellProfile::Brugge, AxiellProfile::Muzee], true)
+                && in_array($path, ['object_category', 'production.period', 'content.motif.general', 'content.motif.specific', 'acquisition.method'], true)) {
+                // These fixes pair terms with a parallel array of legacy authority IDs.
+                // Scope VKC references by museum: identical labels need not share an ID.
+                $scope = $profile === AxiellProfile::Vkc ? 'vkc/'.$origin->value : $profile->value;
+                $id = $this->lookup('term_refs', $scope.'|'.$path.'|'.self::clean($label ?? $element->value ?? ''));
+                // Preserve empty positions instead of borrowing a neighbouring term's ID.
+                $result[] = new AxiellElement($element->name.'.lref', $id ?? '');
             }
         }
         return $result;
