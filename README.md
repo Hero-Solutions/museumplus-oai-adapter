@@ -143,20 +143,21 @@ via Ansible of pas ze zelf aan op de bedoelde omgeving.
 | --- | --- |
 | `DATABASE_URL` | Databaseverbinding |
 | `MUSEUMPLUS_EXPORT_URL`, `MUSEUMPLUS_USERNAME`, `MUSEUMPLUS_PASSWORD` | Export en aanmelding |
-| `MUSEUMPLUS_WEBPUBLICATION_IDS` | Verplichte lijst positieve numerieke webpublicatie-ID's, gescheiden door komma's of witruimte; selectie met OF |
+| `MUSEUMPLUS_WEBPUBLICATION_IDS` | Positieve numerieke webpublicatie-ID's, gescheiden door komma's of witruimte |
+| `MUSEUMPLUS_ORG_UNITS` | MuseumPlus-organisatiecodes, gescheiden door komma's of witruimte |
 | `MUSEUMPLUS_TIMEOUT_SECONDS` | Timeout per aanvraag |
 | `MUSEUMPLUS_OAI_IDENTIFIER_PREFIX`, `MUSEUMPLUS_DEFAULT_SET_SPEC` | Interne opslagwaarden; bepalen de publieke identifiers niet |
 
-De REST-filter gebruikt vast `ObjWebPublicationGrp.WebPublicationVoc`.
-`MUSEUMPLUS_SEARCH_FIELD_PATH`, `MUSEUMPLUS_SEARCH_OPERAND` en
-`MUSEUMPLUS_ORG_UNITS` worden niet meer gebruikt en mogen uit de configuratie.
-Een lege of ongeldige ID-lijst stopt de import; er is geen ongefilterde terugval.
+Een ingevulde `MUSEUMPLUS_WEBPUBLICATION_IDS` selecteert op
+`ObjWebPublicationGrp.WebPublicationVoc`. Bij een ontbrekende of lege waarde
+gebruikt de import `MUSEUMPLUS_ORG_UNITS` en zoekt op `__orgUnit`.
+De export selecteert records die minstens één waarde uit de actieve lijst matchen.
+De import vereist een geldige actieve lijst. De publicatievlaggen op de
+opgehaalde records bepalen de OAI-sets.
 
-Stel de ID's voor VKC datahub en Extranet in via de hostconfiguratie, onder
-`museumplus_oai_adapter.museumplus.webpublication_ids`. Ansible zet deze lijst
-om naar `MUSEUMPLUS_WEBPUBLICATION_IDS`.
-Een lijst over meerdere regels binnen aanhalingstekens werkt ook. De volgorde
-en dubbele ID's veranderen de selectie niet. Na een filterwijziging begint de
+Stel in Ansible `webpublication_ids` of `org_units` in onder
+`museumplus_oai_adapter.museumplus`. Ansible schrijft enkel de actieve lijst.
+De volgorde en dubbele waarden veranderen de selectie niet. Na een filterwijziging begint de
 volgende standaardimport automatisch opnieuw. Voor een onmiddellijke import
 voer je zelf `php bin/console app:import-museumplus-records --env=prod` uit.
 Heropbouwen haalt ontbrekende bronrecords niet alsnog op.

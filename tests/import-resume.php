@@ -32,6 +32,7 @@ $_ENV = [
     'MUSEUMPLUS_USERNAME' => 'fake-user',
     'MUSEUMPLUS_PASSWORD' => 'fake-password',
     'MUSEUMPLUS_WEBPUBLICATION_IDS' => '101',
+    'MUSEUMPLUS_ORG_UNITS' => '',
     'MUSEUMPLUS_OAI_IDENTIFIER_PREFIX' => 'test:',
     'MUSEUMPLUS_DEFAULT_SET_SPEC' => 'test',
     'MUSEUMPLUS_TIMEOUT_SECONDS' => '1',
@@ -182,13 +183,13 @@ foreach (['101', '101,303', '202'] as $changedSelection) {
     runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
     check($db->tables === $saved, 'Changing the publication filter changed saved data.');
 }
-foreach (['', ', ,', '101,Extranet', '0', '101,"/><or>'] as $invalid) {
+foreach ([', ,', '101,Extranet', '0', '101,"/><or>'] as $invalid) {
     $_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = $invalid;
     runImport($db, noFetch(...), ['--restart' => true], 'MUSEUMPLUS_WEBPUBLICATION_IDS');
     check($db->tables === $saved, 'Invalid publication IDs modified the checkpoint or staging.');
 }
 $_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = "\n202\r\n  101, 202\n";
-// Leftover legacy settings must never restrict the new publication filter.
+// A nonempty publication selection takes precedence over the organisation codes.
 $_ENV['MUSEUMPLUS_ORG_UNITS'] = 'org_1_TestMuseum';
 $_ENV['MUSEUMPLUS_SEARCH_FIELD_PATH'] = 'ObjCategoryVoc';
 $_ENV['MUSEUMPLUS_SEARCH_OPERAND'] = '999';
@@ -200,8 +201,30 @@ $requests = runImport($db, static function (int $offset, int $limit, string $bod
 }, ['--resume' => true]);
 check($requests === [[2, 1000]], 'Reordering or repeating publication IDs prevented a safe resume.');
 $_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '101';
-unset($_ENV['MUSEUMPLUS_ORG_UNITS'], $_ENV['MUSEUMPLUS_SEARCH_FIELD_PATH'], $_ENV['MUSEUMPLUS_SEARCH_OPERAND']);
-fwrite(STDOUT, "PASS: publication OR filter reaches the export; changed selections block resume; invalid IDs preserve staging; legacy filters are ignored\n");
+$_ENV['MUSEUMPLUS_ORG_UNITS'] = '';
+unset($_ENV['MUSEUMPLUS_SEARCH_FIELD_PATH'], $_ENV['MUSEUMPLUS_SEARCH_OPERAND']);
+fwrite(STDOUT, "PASS: publication OR filter reaches the export and takes precedence; changed selections block resume; invalid IDs preserve staging\n");
+
+$db = interruptedImport();
+$saved = $db->tables;
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '';
+foreach (['', '101', 'org_1_Test,"/><or>'] as $invalid) {
+    $_ENV['MUSEUMPLUS_ORG_UNITS'] = $invalid;
+    runImport($db, noFetch(...), ['--restart' => true], 'MUSEUMPLUS_ORG_UNITS');
+    check($db->tables === $saved, 'Invalid organisation codes modified saved data.');
+}
+$_ENV['MUSEUMPLUS_ORG_UNITS'] = "org_2_Test\norg_1_Test, org_2_Test";
+runImport($db, noFetch(...), ['--resume' => true], 'settings changed');
+check($db->tables === $saved, 'Changing filter type modified saved data on resume.');
+$requests = runImport($db, static function (int $offset, int $limit, string $body): MockResponse {
+    check(str_contains($body, '<expert><or><equalsField fieldPath="__orgUnit" operand="org_1_Test"/><equalsField fieldPath="__orgUnit" operand="org_2_Test"/></or></expert>'), 'The import did not OR the organisation codes.');
+
+    return batch(['3']);
+});
+check($requests === [[0, 1000]] && array_keys($db->tables['records']) === ['test:3'], 'Switching to organisations did not start a fresh import.');
+$_ENV['MUSEUMPLUS_WEBPUBLICATION_IDS'] = '101';
+$_ENV['MUSEUMPLUS_ORG_UNITS'] = '';
+fwrite(STDOUT, "PASS: organisation fallback reaches the export and resets an incompatible checkpoint\n");
 
 foreach (['filter', 'mapping'] as $change) {
     foreach (['fetching', 'ready', 'completed'] as $status) {

@@ -80,14 +80,21 @@ final class ImportMuseumPlusRecordsCommand extends Command
         $url = $this->env('MUSEUMPLUS_EXPORT_URL');
         $username = $this->env('MUSEUMPLUS_USERNAME');
         $password = $this->env('MUSEUMPLUS_PASSWORD');
-        $publicationIds = MuseumPlusSearch::parsePublicationIds($this->env('MUSEUMPLUS_WEBPUBLICATION_IDS'));
+        $publicationIds = $this->env('MUSEUMPLUS_WEBPUBLICATION_IDS', '');
+        if ($publicationIds !== '') {
+            $filterField = MuseumPlusSearch::FIELD_PATH;
+            $filterIds = MuseumPlusSearch::parsePublicationIds($publicationIds);
+        } else {
+            $filterField = MuseumPlusSearch::ORG_FIELD_PATH;
+            $filterIds = MuseumPlusSearch::parseOrgUnits($this->env('MUSEUMPLUS_ORG_UNITS'));
+        }
         $identifierPrefix = $this->env('MUSEUMPLUS_OAI_IDENTIFIER_PREFIX');
         $defaultSetSpec = $this->env('MUSEUMPLUS_DEFAULT_SET_SPEC');
         $timeout = $this->positiveIntEnv('MUSEUMPLUS_TIMEOUT_SECONDS');
 
         $io->title('MuseumPlus import');
 
-        $sourceSettings = [$url, MuseumPlusSearch::FIELD_PATH, $publicationIds, $identifierPrefix, $defaultSetSpec];
+        $sourceSettings = [$url, $filterField, $filterIds, $identifierPrefix, $defaultSetSpec];
         // Never publish a mix of old conversions and new profiles after a resume.
         $sourceSettings[] = $this->recordBuilder->mappingVersion();
         $sourceHash = hash('sha256', json_encode($sourceSettings, JSON_THROW_ON_ERROR));
@@ -129,7 +136,8 @@ final class ImportMuseumPlusRecordsCommand extends Command
                     url: $url,
                     username: $username,
                     password: $password,
-                    publicationIds: $publicationIds,
+                    filterField: $filterField,
+                    filterIds: $filterIds,
                     limit: $limit,
                     offset: $offset,
                     timeout: $timeout,
@@ -298,14 +306,15 @@ final class ImportMuseumPlusRecordsCommand extends Command
     }
 
     /**
-     * @param list<string> $publicationIds
+     * @param list<string> $filterIds
      * @return list<MuseumPlusParsedRecord>
      */
     private function fetchBatch(
         string $url,
         string $username,
         string $password,
-        array $publicationIds,
+        string $filterField,
+        array $filterIds,
         int $limit,
         int $offset,
         int $timeout,
@@ -324,7 +333,7 @@ final class ImportMuseumPlusRecordsCommand extends Command
                         'Content-Type' => 'application/xml',
                         'Accept-Encoding' => 'identity',
                     ],
-                    'body' => MuseumPlusSearch::xml($publicationIds, $limit, $offset),
+                    'body' => MuseumPlusSearch::xml($filterIds, $limit, $offset, $filterField),
                     'timeout' => $timeout,
                     'buffer' => false,
                     'max_redirects' => 0,
