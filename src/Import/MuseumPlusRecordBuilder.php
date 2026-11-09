@@ -21,7 +21,7 @@ final readonly class MuseumPlusRecordBuilder
 
     public function mappingVersion(): string
     {
-        return 'profiles-20261104-material-sources-display-v3:'.$this->publicationSelector->fingerprint().':'.$this->mapper->referenceFingerprint();
+        return 'profiles-20261109-public-labels-duration-v1:'.$this->publicationSelector->fingerprint().':'.$this->mapper->referenceFingerprint();
     }
 
     /** @param (callable(array{field: string, message: string}): void)|null $onWarning

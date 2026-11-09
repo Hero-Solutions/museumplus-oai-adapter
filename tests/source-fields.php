@@ -66,5 +66,23 @@ foreach (AxiellProfile::cases() as $profile) {
     [$x] = mapped(['DimensionTxt'=>'<dimension.free>eerste beschrijving</dimension.free><dimension.free>variabel (de video duurt 28 minuten)</dimension.free><dimension.free>eerste beschrijving</dimension.free>'], $profile);
     check($x->evaluate('count(/record/dimension.free)') === 1.0, 'Display dimensions must remain one scalar field for the fixes.');
     check($x->evaluate('string(/record/dimension.free)') === 'eerste beschrijving; variabel (de video duurt 28 minuten)', 'Repeated dimension display text was lost or duplicated.');
+
+    $translations = '';
+    foreach (['Frans titel'=>'Frans', 'Engelse'=>'Engels', 'Engles'=>'Engels', 'nEngels'=>'Engels', 'Engels (Tavernier)'=>'Engels'] as $label=>$language) {
+        $translations .= '<Titel_translation><title.translation>Titel '.$label.'</title.translation><title.language>'.$label.'</title.language></Titel_translation>';
+    }
+    [$x, $warnings] = mapped(['TranslatedTitleTxt'=>$translations], $profile);
+    check($x->evaluate('count(/record/Titel_translation[title.language="Frans"])') === 1.0 && $x->evaluate('count(/record/Titel_translation[title.language="Engels"])') === 4.0 && $warnings === [], 'Recognisable explicit title labels were lost.');
+
+    [$x, $warnings] = mapped(['CurrentLocationTxt'=>'<Current_location><current_location>intern rek</current_location><op>Op reis;Nu te zien in Permekemuseum;Nu te zien in Ensorhuis;Brugse Vrije;Arentshuis;Gezellehuis;O.L.V.-kerk Museum;kunststof, inert, gesloten;80*60*42 cm</op></Current_location>'], $profile);
+    check($x->evaluate('count(/record/Current_location/current_location/op)') === 7.0 && count($warnings) === 2, 'Public locations lost or packaging text exposed as a public label.');
+    check($x->evaluate('string(/record/Current_location/current_location/op[2])') === 'Nu te zien in Permekemuseum', 'Public location text changed.');
+
+    [$x] = mapped(['DimensionTxt'=>'<Dimension><dimension.value>24 min. (video)</dimension.value><dimension.unit>min.</dimension.unit><dimension.part>video</dimension.part><dimension.notes>duur' . "\n" . '24 min. 2 sec.</dimension.notes></Dimension>'
+        .'<Dimension><dimension.value>9</dimension.value><dimension.unit>cm</dimension.unit><dimension.notes>een onduidelijke tekst</dimension.notes></Dimension>'
+        .'<Dimension><dimension.type>breedte</dimension.type><dimension.value>5</dimension.value><dimension.notes>duur</dimension.notes></Dimension>'], $profile);
+    check($x->evaluate('string(/record/Dimension[1]/dimension.type)') === 'duur' && $x->evaluate('string(/record/Dimension[1]/dimension.value)') === '24 min. (video)' && $x->evaluate('string(/record/Dimension[1]/dimension.part)') === 'video', 'Explicit duration note not recovered or source value changed.');
+    check($x->evaluate('string(/record/Dimension[1]/dimension.notes)') === 'duur 24 min. 2 sec.', 'Duration notes lost.');
+    check($x->evaluate('count(/record/Dimension[2]/dimension.type)') === 0.0 && $x->evaluate('string(/record/Dimension[3]/dimension.type)') === 'breedte', 'Unknown measurement type guessed or explicit source type overwritten.');
 }
 echo "PASS: explicit title languages only; grouped life places and relations; full measurements; multiple authors/styles in all four profiles\n";

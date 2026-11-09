@@ -178,6 +178,9 @@ Samengestelde afmetingen worden in alle vier de sets opgesplitst: bijvoorbeeld
 `Hoogte x Breedte` met `12 x 15` wordt `hoogte = 12` en `breedte = 15`.
 Eenheid, onderdeel, precisie en notities blijven bij de afmetingen. Als de types
 en waarden niet overeenkomen, blijft de oorspronkelijke combinatie behouden.
+Een ontbrekend afmetingstype wordt alleen aangevuld als `duur` wanneer de
+bronnotitie dit uitdrukkelijk vermeldt op de eerste regel. Waarde en eenheid
+blijven behouden.
 
 Materiaalvertalingen uit `material.fr` en `material.en` krijgen voorrang op de
 Axiell-referenties. MSK en VKC ontvangen ze als `material/notes`: eerst Frans,

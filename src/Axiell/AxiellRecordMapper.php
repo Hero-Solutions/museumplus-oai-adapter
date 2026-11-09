@@ -424,8 +424,14 @@ final class AxiellRecordMapper
             $rows = [];
         }
         foreach ($rows as $row) {
+            $type = $row['type'][0] ?? null;
+            // Some duration rows have an empty type, but explicitly start their notes with "duur".
+            // Keep the value, unit and notes unchanged; do not infer a type from an arbitrary number.
+            if ($type === null && array_any($row['notes'], static fn (string $note): bool => preg_match('/^\h*duur\h*(?:\R|$)/iu', $note) === 1)) {
+                $type = 'duur';
+            }
             foreach ($row['value'] as $value) {
-                foreach ($this->dimensionNormalizer->normalize([$value], $row['unit'], $row['part'], $row['type'][0] ?? null) as $dimension) {
+                foreach ($this->dimensionNormalizer->normalize([$value], $row['unit'], $row['part'], $type) as $dimension) {
                     $this->addNode($elements, 'Dimension', [
                         AxiellElement::text('dimension.type', $dimension['type']),
                         AxiellElement::text('dimension.unit', $dimension['unit']),

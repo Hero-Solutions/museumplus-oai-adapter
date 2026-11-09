@@ -9,9 +9,10 @@ final class LabelNormalizer
     public function titleLanguage(string $value): string
     {
         return match (mb_strtolower(trim($value), 'UTF-8')) {
-            'nl', 'nederlands', 'nederlandse titel' => 'Nederlands',
-            'fr', 'frans', 'franse titel', 'franstalige titel' => 'Frans',
-            'en', 'engels', 'engelse titel', 'engelstalige titel' => 'Engels',
+            'nl', 'nederlands', 'nederlandse titel', 'nederlandstalige titel' => 'Nederlands',
+            'fr', 'frans', 'franse titel', 'frans titel', 'franstalige titel' => 'Frans',
+            // Explicit language labels found in the export, including spelling variants.
+            'en', 'engels', 'engelse', 'engles', 'nengels', 'engels (tavernier)', 'engelse titel', 'engelstalige titel' => 'Engels',
             'de', 'duits', 'duitse titel', 'duitstalige titel' => 'Duits',
             default => trim($value),
         };
@@ -22,7 +23,7 @@ final class LabelNormalizer
     {
         $value = trim($value);
         $allowed = [
-            'Depot', 'In depot', 'Te zien op zaal', 'In bruikleen', 'In restauratie',
+            'Depot', 'In depot', 'Te zien op zaal', 'In bruikleen', 'In restauratie', 'Op reis',
             'Niet gelokaliseerd', 'Langdurig op andere locatie',
             'Œuvre exposée en salle', 'Work on display',
             'Œuvre non exposée en salle actuellement', 'Work currently not on display',
@@ -31,6 +32,7 @@ final class LabelNormalizer
             'Œuvre actuellement en prêt', 'Work on loan',
             'Gruuthusemuseum', 'Museum Sint-Janshospitaal', 'Volkskundemuseum',
             'Stadhuis', 'Belfort', 'O.L.V. ter Potterie', 'Groeningemuseum',
+            'Brugse Vrije', 'Arentshuis', 'Gezellehuis', 'O.L.V.-kerk Museum',
         ];
         foreach ($allowed as $label) {
             if (mb_strtolower($value, 'UTF-8') === mb_strtolower($label, 'UTF-8')) {
@@ -38,7 +40,7 @@ final class LabelNormalizer
             }
         }
 
-        return preg_match('/^Nu te zien in (?:Mu\.ZEE|peiremuzee|de Venetiaanse Gaanderijen)$/iu', $value) === 1 ? $value : null;
+        return preg_match('/^Nu te zien in (?:Mu\.ZEE|peiremuzee|de Venetiaanse Gaanderijen|Permekemuseum|Ensorhuis)$/iu', $value) === 1 ? $value : null;
     }
 
     public function productionPlace(string $value): string
