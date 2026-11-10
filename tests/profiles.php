@@ -82,12 +82,7 @@ $periodFields = ['PeriodTxt'=>'<Production_period><production.period>20ste eeuw<
 foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
     [$x] = mapped($periodFields + ['MuseumTxt'=>'<institution.name>Museum voor Schone Kunsten Gent</institution.name>'], $profile);
     check($x->evaluate('count(/record/production.period)') === 3.0, 'MSK period count changed.');
-    foreach (['20ste eeuw'=>['20ème siècle','20th century'], '19de eeuw'=>['19ème siècle','19th century']] as $period=>$translations) {
-        $path = '/record/production.period[term="'.$period.'"]';
-        check($x->evaluate('count('.$path.'/notes)') === 2.0, 'MSK period translations missing or duplicated in '.$profile->value);
-        check($x->evaluate('string('.$path.'/notes[1])') === $translations[0], 'MSK French period translation shifted.');
-        check($x->evaluate('string('.$path.'/notes[2])') === $translations[1], 'MSK English period translation shifted.');
-    }
+    check($x->evaluate('count(/record/production.period/notes)') === 0.0, 'Historical period translations still emitted.');
     check($x->evaluate('count(/record/production.period[term="onbekende periode"]/notes)') === 0.0, 'Unknown period inherited translations.');
     check($x->evaluate('string(/record/production.period.notes)') === 'Vrije bronnotitie', 'Source period note changed into a translation.');
 }
@@ -95,7 +90,7 @@ foreach (['Musea Brugge', 'Mu.ZEE, Kunstmuseum aan zee', 'Onbekende instelling']
     [$x] = mapped($periodFields + ['MuseumTxt'=>'<institution.name>'.$institution.'</institution.name>'], AxiellProfile::Vkc);
     check($x->evaluate('count(/record/production.period/notes)') === 0.0, 'MSK period translations leaked into another museum.');
 }
-echo "PASS: known MSK period translations in both profiles; unknown periods and other museums untouched\n";
+echo "PASS: period terms and source notes retained without historical translations\n";
 
 $selector = new PublicationSelector();
 $record = static fn(string $museum, string $number, array $tags): RecordValues => new RecordValues('test', $number, ['Naam_bewaarinstelling::institution.name'=>[$museum], 'WebPublicationTxt::webpublication'=>$tags], [], [], []);

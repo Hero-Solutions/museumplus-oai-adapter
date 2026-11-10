@@ -58,7 +58,7 @@ foreach (AxiellProfile::cases() as $profile) {
         foreach (['type'=>$type,'value'=>$value,'part'=>$part,'unit'=>'cm'] as $field=>$expected) check($x->evaluate('string('.$path.'/dimension.'.$field.')') === $expected, 'Dimension value/type/part/unit misaligned.');
     }
     check($x->evaluate('string(/record/Dimension[6]/dimension.type)') === 'duur', 'Time measurement not labelled as duration.');
-    check($x->evaluate('string(/record/Dimension[6]/dimension.value)') === '24 min. (video)' && $x->evaluate('string(/record/Dimension[6]/dimension.notes)') === '24 min. 2 sec.', 'Textual duration lost or guessed.');
+    check($x->evaluate('string(/record/Dimension[6]/dimension.value)') === '24' && $x->evaluate('string(/record/Dimension[6]/dimension.notes)') === '24 min. 2 sec.', 'Textual duration lost or guessed.');
     check($x->evaluate('string(/record/dimension.free)') === 'Exacte displaytekst met alle onderdelen', 'Dimension display changed.');
     check($x->evaluate('count(/record/Documentation[1]/documentation.title/Author)') === 2.0 && $x->evaluate('string(/record/Documentation[1]/documentation.title/Author[2]/author.name)') === 'Auteur B', 'Bibliographic authors merged or lost.');
     check($x->evaluate('count(/record/Documentation[2]/documentation.title/Author)') === 0.0, 'Author shifted between documents.');
@@ -81,7 +81,7 @@ foreach (AxiellProfile::cases() as $profile) {
     [$x] = mapped(['DimensionTxt'=>'<Dimension><dimension.value>24 min. (video)</dimension.value><dimension.unit>min.</dimension.unit><dimension.part>video</dimension.part><dimension.notes>duur' . "\n" . '24 min. 2 sec.</dimension.notes></Dimension>'
         .'<Dimension><dimension.value>9</dimension.value><dimension.unit>cm</dimension.unit><dimension.notes>een onduidelijke tekst</dimension.notes></Dimension>'
         .'<Dimension><dimension.type>breedte</dimension.type><dimension.value>5</dimension.value><dimension.notes>duur</dimension.notes></Dimension>'], $profile);
-    check($x->evaluate('string(/record/Dimension[1]/dimension.type)') === 'duur' && $x->evaluate('string(/record/Dimension[1]/dimension.value)') === '24 min. (video)' && $x->evaluate('string(/record/Dimension[1]/dimension.part)') === 'video', 'Explicit duration note not recovered or source value changed.');
+    check($x->evaluate('string(/record/Dimension[1]/dimension.type)') === 'duur' && $x->evaluate('string(/record/Dimension[1]/dimension.value)') === '24' && $x->evaluate('string(/record/Dimension[1]/dimension.part)') === 'video', 'Explicit duration note not recovered or source value changed.');
     check($x->evaluate('string(/record/Dimension[1]/dimension.notes)') === 'duur 24 min. 2 sec.', 'Duration notes lost.');
     check($x->evaluate('count(/record/Dimension[2]/dimension.type)') === 0.0 && $x->evaluate('string(/record/Dimension[3]/dimension.type)') === 'breedte', 'Unknown measurement type guessed or explicit source type overwritten.');
 }

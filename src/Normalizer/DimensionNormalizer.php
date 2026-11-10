@@ -40,6 +40,13 @@ final class DimensionNormalizer
         $knownTypes = $explicitTypes !== [] && array_diff($explicitTypes, self::TYPES) === [];
 
         foreach ($values as $index => $value) {
+            if ($type !== null && strtolower($type) === 'duur') {
+                $duration = $this->duration($value, $units[$index] ?? null, $parts[$index] ?? 'geheel');
+                if ($duration !== null) {
+                    $dimensions[] = $duration;
+                    continue;
+                }
+            }
             $parsed = $this->parseValue($value, $units[$index] ?? null);
             $part = $parts[$index] ?? 'geheel';
             $types = $knownTypes ? $explicitTypes : [];
@@ -65,6 +72,22 @@ final class DimensionNormalizer
         }
 
         return $dimensions;
+    }
+
+    /** Split only a single explicit duration; never interpret 16.24 as 16m24s. */
+    private function duration(string $text, ?string $unit, string $part): ?array
+    {
+        if (preg_match('/^\s*(?:(ca\.?|circa)\s+)?(\d+(?:[.,]\d+)?)\s*(min\.?|minuten|sec\.?|seconden|u\.?|uur)(?:\s*\(([^()]*)\))?\s*$/iu', $text, $m) !== 1) return null;
+        $unitKind = static fn (string $value): ?string => match (mb_strtolower(rtrim(trim($value), '.'))) {
+            'min', 'minuten' => 'min', 'sec', 'seconden' => 'sec', 'u', 'uur' => 'u', default => null,
+        };
+        if ($unit !== null && $unitKind($unit) !== $unitKind($m[3])) return null;
+        return [
+            'type' => 'duur', 'value' => $m[2], 'unit' => $unit ?? $m[3], 'part' => $part,
+            'precision' => ($m[1] ?? '') === '' ? [] : [$m[1]],
+            // Preserve the full source expression, including approximation/context.
+            'notes' => [trim($text)],
+        ];
     }
 
     /**

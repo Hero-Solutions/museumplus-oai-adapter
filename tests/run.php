@@ -7,7 +7,7 @@ declare(strict_types=1);
 $suites = [
     'import-schema',
     'search-filter', 'xml-fragments', 'export-format', 'profiles', 'source-fields',
-    'reference-mapping', 'raw-archive', 'rebuild-records', 'harvest-query', 'oai-profiles', 'import-resume',
+    'reference-mapping', 'mapping-contracts', 'raw-archive', 'rebuild-records', 'harvest-query', 'oai-profiles', 'import-resume',
 ];
 
 foreach ($suites as $suite) {

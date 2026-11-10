@@ -5,7 +5,7 @@ namespace App\Axiell;
 
 use App\Mapping\RecordValues;
 
-/** Frozen terminology/interpretation hints, never a substitute for current record values. */
+/** Frozen object identities only. No terminology or record content may be read from this index. */
 final class AxiellReference
 {
     private static array $cache = [];
@@ -18,27 +18,27 @@ final class AxiellReference
     {
         if (!isset(self::$cache[$file])) {
             $json = file_get_contents($file);
-            if ($json === false) throw new \RuntimeException('Missing Axiell compatibility dictionary.');
+            if ($json === false) throw new \RuntimeException('Missing Axiell identity index.');
             $data = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
             if (hash_file('sha256', $file.'l') !== $data['sha256']) throw new \RuntimeException('Axiell reference index and data disagree.');
             self::$cache[$file] = [$data, hash('sha256', $json)];
         }
         [$this->data, $this->hash] = self::$cache[$file];
         $this->stream = fopen($file.'l', 'rb');
-        if ($this->stream === false) throw new \RuntimeException('Cannot read Axiell compatibility dictionary.');
+        if ($this->stream === false) throw new \RuntimeException('Cannot read Axiell identity index.');
     }
 
     public function fingerprint(): string { return $this->hash; }
     public static function clean(string $v): string { return trim(preg_replace('/\s+/u', ' ', $v) ?? $v); }
 
-    public function record(RecordValues $record, AxiellProfile $profile): array
+    private function record(RecordValues $record, AxiellProfile $profile): array
     {
         $ref = $this->lookup('records', $profile->value.'|'.$record->sourceIdentifier) ?? [];
         return ($ref['number'] ?? null) === self::clean($record->objectNumber ?? '')
-            && ($ref['institution'] ?? null) === self::clean($record->valuesByPath['Naam_bewaarinstelling::institution.name'][0] ?? '') ? $ref : [];
+            && ($ref['institution'] ?? null) === self::clean($record->valuesByPath['Naam_bewaarinstelling::institution.name'][0] ?? '') ? array_intersect_key($ref, array_flip(['number', 'institution', 'priref'])) : [];
     }
 
-    /** One object identity across sets; field interpretations remain profile-specific. */
+    /** One verified object identity across all sets. */
     public function priref(RecordValues $record): string
     {
         $ids = [];
@@ -65,60 +65,4 @@ final class AxiellReference
         return $this->entries[$key];
     }
 
-    public function element(array $tree): AxiellElement
-    {
-        return new AxiellElement($tree['name'], $tree['value'], array_map($this->element(...), $tree['children']), $tree['attributes']);
-    }
-
-    public function enumeration(string $name, string $value, ?array $verified = null): AxiellElement
-    {
-        $aliases = ['eigen afgebeelde locatie'=>'GEOKEYW','eigen afgebeelde gebeurtenis'=>'ACTIV','afgebeelde gebeurtenis'=>'EVENT'];
-        if ($verified !== null) {
-            $labels = array_column($verified['children'], 'value');
-            $ambiguousCodes = match ($value) {
-                'institution' => ['PERSON', 'INST'],
-                'eigen afgebeeld object' => ['OBJECT', 'SUBJECT'],
-                default => [],
-            };
-            // Old types may disambiguate an unchanged label, never override a newly explicit type.
-            if (in_array($aliases[$value] ?? $value, $labels, true) || array_intersect($ambiguousCodes, $labels) !== []) return $this->element($verified);
-        }
-        $key = $name.'|'.($aliases[$value] ?? $value);
-        $values = $this->lookup('enums', $key);
-        $children = $values !== null ? array_map($this->element(...), $values) : [new AxiellElement('value', $value, [], ['lang'=>'1'])];
-        return new AxiellElement($name, null, $children);
-    }
-
-    public function enrich(array $elements, AxiellProfile $profile, string $parent = '', ?AxiellProfile $museum = null): array
-    {
-        $result = [];
-        foreach ($elements as $element) {
-            $path = $parent === '' ? $element->name : $parent.'/'.$element->name;
-            $children = $this->enrich($element->children, $profile, $path, $museum);
-            $label = null;
-            foreach ($children as $c) if (in_array($c->name, ['term','name'], true)) { $label = $c->value; break; }
-            if ($label !== null) {
-                $existing = array_column($children, 'name');
-                $sourceFields = ['source', 'term.number', 'term.code'];
-                $hasSourceReference = array_intersect($existing, $sourceFields) !== [];
-                foreach ($this->lookup('terms', $profile->value.'|'.$path.'|'.self::clean($label)) ?? [] as $extra) {
-                    // Never combine a current vocabulary source with an old vocabulary ID, or vice versa.
-                    if ($hasSourceReference && in_array($extra['name'], $sourceFields, true)) continue;
-                    if (!in_array($extra['name'], $existing, true)) $children[] = $this->element($extra);
-                }
-            }
-            $result[] = new AxiellElement($element->name, $element->value, $children, $element->attributes);
-            $origin = $profile === AxiellProfile::Vkc ? $museum : $profile;
-            if (in_array($origin, [AxiellProfile::Brugge, AxiellProfile::Muzee], true)
-                && in_array($path, ['object_category', 'production.period', 'content.motif.general', 'content.motif.specific', 'acquisition.method'], true)) {
-                // These fixes pair terms with a parallel array of legacy authority IDs.
-                // Scope VKC references by museum: identical labels need not share an ID.
-                $scope = $profile === AxiellProfile::Vkc ? 'vkc/'.$origin->value : $profile->value;
-                $id = $this->lookup('term_refs', $scope.'|'.$path.'|'.self::clean($label ?? $element->value ?? ''));
-                // Preserve empty positions instead of borrowing a neighbouring term's ID.
-                $result[] = new AxiellElement($element->name.'.lref', $id ?? '');
-            }
-        }
-        return $result;
-    }
 }

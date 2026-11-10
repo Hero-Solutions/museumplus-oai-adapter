@@ -107,7 +107,7 @@ $xpath = new DOMXPath($document);
 check($xpath->evaluate('count(/record/Title[title="A"]/title.type)') === 0.0 && $xpath->evaluate('string(/record/Title[title="B"]/title.type)') === 'oude titel', 'Title repetitions were merged.');
 check($xpath->evaluate('count(/record/Material[material/term="papier"]/material.notes)') === 0.0 && $xpath->evaluate('string(/record/Material[material/term="krijt"]/material.notes)') === 'wit', 'Material repetitions were merged.');
 check($xpath->evaluate('count(/record/Production_date[production.date.start="1900"]/production.date.end)') === 0.0 && $xpath->evaluate('string(/record/Production_date[production.date.start="1950"]/production.date.end)') === '1960', 'Date group normalisation shifted an optional end date.');
-check($xpath->evaluate('string(/record/Description/description)') === 'Alpha & Beta', 'Repaired text was not retained.');
+check($xpath->evaluate('string(/record/Description[description!=""]/description)') === 'Alpha & Beta', 'Repaired text was not retained.');
 check($xpath->evaluate('count(/record/Production[creator/name="Maker A"]/creator.lref)') === 0.0 && $xpath->evaluate('string(/record/Production[creator/name="Maker B"]/creator.lref)') === '502', 'A creator link moved to another creator.');
 check($xpath->evaluate('count(/record/Reproduction[reproduction.reference="https://example.invalid/image-a"]/reproduction.reference.lref)') === 0.0 && $xpath->evaluate('string(/record/Reproduction[reproduction.reference="https://example.invalid/image-b"]/reproduction.reference.lref)') === '702', 'A reproduction link moved to another reproduction.');
 foreach (['lref' => '602', 'context' => 'Context B', 'type' => 'LOCATION', 'date' => '2026-04-08', 'notes' => 'Notitie B'] as $field => $expected) {

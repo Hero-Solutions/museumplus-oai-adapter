@@ -86,21 +86,35 @@ Volg daarna de `resumptionToken` met alleen dezelfde `verb` en de token.
 Ook `Identify`, `ListSets`, `ListMetadataFormats` en `ListIdentifiers` zijn beschikbaar.
 GET, POST en datumfilters worden ondersteund.
 
-Voor Brugge en Mu.ZEE krijgen categorieën, periodes, motieven en
-verwervingsmethodes waar beschikbaar hun geverifieerde Axiell-termverwijzing
-mee. Die koppelingen zijn nodig voor de bestaande fixes. De term komt uit
-MuseumPlus; bij onbekende of dubbelzinnige koppelingen blijft de verwijzing leeg.
-MSK-termen krijgen hun bekende FR/EN-vertalingen ook in de VKC-set.
-De materiaalbron en het termnummer uit MuseumPlus krijgen voorrang op de
-referentiedata. De adapter combineert geen nieuwe bron met een oude termcode.
+Inhoud komt uitsluitend uit MuseumPlus. De Axiell-referentie bewaart alleen de
+koppeling met bestaande OAI-identifiers. Oude vertalingen, thesaurusnummers,
+materiaalomschrijvingen en veldinterpretaties worden niet meer aangevuld.
+De afzonderlijk ingestelde FR/EN-namen van MSK Gent blijven behouden.
+Materiaalvertalingen en bronverwijzingen die MuseumPlus zelf levert, blijven doorstromen.
+
+De ongewijzigde Brugge- en Mu.ZEE-fixes gebruiken bij sommige termen een parallelle
+lijst met thesaurus-ID's. Zonder bron-ID blijven die posities leeg. Bij meerdere
+termen meldt de adapter dat de fix ze kan laten samenvallen. De adapter bewaart
+alle termen en verzint geen ID's; voor volledig behoud in LIDO moet dit bron-/fixcontract
+nog worden opgelost.
 
 Vertaalde titels worden alleen opgenomen met een herkenbaar, eenduidig
 taallabel (NL/FR/EN/DE). Zonder bruikbaar label worden ze overgeslagen en gemeld;
-de adapter leidt de taal nooit af uit de positie. De Nederlandse hoofdtitel
-blijft behouden. Geboorte- en sterfteplaatsen blijven bij hun vervaardiger,
+de adapter leidt de taal nooit af uit de positie. De Brugge-museumfix verwerkt
+maar één Nederlandse titel: een expliciete NL-vertaling komt daarom vooraan.
+De oorspronkelijke titel blijft daarnaast in de adapter-XML bewaard.
+Beschrijvingen zonder betrouwbare taal komen na de gereserveerde taalposities,
+zodat MSK en VKC ze zonder gegokt taallabel verwerken.
+Geboorte- en sterfteplaatsen blijven bij hun vervaardiger,
 objectrelaties bij hun bronverwijzing. Samengestelde afmetingen worden alleen
 opgesplitst wanneer types en waarden overeenkomen. Meerdere afmetingsteksten
 worden samengevoegd tot één displayveld, zonder de volgende tekst te verliezen.
+Een enkelvoudige duur wordt gesplitst in getal en eenheid; de volledige tekst en
+eventuele benadering blijven bewaard. Expliciete tentoonstellingsdatumbereiken
+leveren begin en einde op, zonder bestaande datums te overschrijven.
+Vervaardigingsplaatsen blijven volledig, inclusief land. Alleen bij één vervaardiger
+en één plaats wordt die plaats voor de MSK-museumfix bij de vervaardiger gezet.
+Andere gevallen blijven apart in XML en krijgen een melding.
 
 Nieuwe bronvelden vereisen een nieuwe import. Heropbouwen verwerkt alleen wat
 al in de opgeslagen raw XML aanwezig is.

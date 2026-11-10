@@ -75,153 +75,60 @@ file_put_contents($file.'l', $lines);
 file_put_contents($file, json_encode(['version'=>1,'sha256'=>hash('sha256',$lines),'index'=>$index], JSON_THROW_ON_ERROR));
 try {
     $reference = new AxiellReference($file);
-    $categories = '<Object_category><object_category>testcategorie A</object_category></Object_category>'
-        .'<Object_category><object_category>onbekende categorie</object_category></Object_category>'
-        .'<Object_category><object_category>testcategorie B</object_category><object_category.notes>Bronnotitie</object_category.notes></Object_category>';
     foreach (AxiellProfile::cases() as $profile) {
-        $x = mapFixture($reference, profile: $profile, categories: $categories);
-        check($x->evaluate('count(/record/object_category)') === 3.0, 'Category disappeared during compatibility mapping.');
-        if ($profile !== AxiellProfile::Muzee) {
-            check($x->evaluate('count(/record/object_category.lref[normalize-space()!=""])') === 0.0, 'Mu.ZEE category references leaked into another profile.');
-            continue;
-        }
-        check($x->evaluate('count(/record/object_category.lref)') === 3.0, 'Mu.ZEE category/reference positions do not align.');
-        foreach (['test-authority-a', '', 'test-authority-b'] as $i=>$id) {
-            check($x->evaluate('string(/record/object_category.lref['.($i + 1).'])') === $id, 'Wrong or invented category reference.');
-        }
-        check($x->evaluate('string(/record/object_category[2])') === 'onbekende categorie', 'Unknown current category replaced by historical content.');
-        check($x->evaluate('string(/record/object_category.notes)') === 'Bronnotitie', 'Category note lost.');
+        $x = mapFixture($reference, profile: $profile);
+        check($x->evaluate('string(/record/priref)') === '42', 'Existing identity lost in '.$profile->value);
+        check($x->evaluate('count(/record/material_description | /record/Material/material/notes | /record/Material/material/source | /record/Material/material/term.number)') === 0.0, 'Historical content leaked into '.$profile->value);
+        check($x->evaluate('count(/record/content.date.period)') === 2.0 && $x->evaluate('count(/record/Content_subject[content.subject="Parijs"])') === 0.0, 'Historical ContentDate interpretation was reused.');
+        check($x->evaluate('string(/record/Content_subject/content.subject.type/value/@lang)') === 'source', 'Historical subject type was reused.');
+        check($x->evaluate('string(/record/Material/material.notes)') === 'olieverf op doek', 'Current material note lost.');
+        $x = mapFixture($reference, profile: $profile, type: 'onderwerp');
+        check($x->evaluate('string(/record/Content_subject/content.subject.type/value[3])') === 'onderwerp', 'Current enum label is not in the Catmandu Dutch slot.');
+        check($x->evaluate('string(/record/Content_subject/content.subject.type/value[1])') === '' && $x->evaluate('string(/record/Content_subject/content.subject.type/value[2])') === '', 'Historical enum code/translation reused.');
     }
-    check(mapFixture($reference, profile: AxiellProfile::Muzee)->evaluate('count(/record/object_category.lref)') === 0.0, 'Category reference emitted without a category.');
-    $x = mapFixture($reference);
-    check($x->evaluate('string(/record/priref)') === '42', 'Verified old priref not retained.');
-    foreach (AxiellProfile::cases() as $profile) {
-        $native = mapFixture($reference, profile: $profile);
-        check($native->evaluate('string(/record/priref)') === '42', 'Shared Axiell identity lost in '.$profile->value);
-        if ($profile !== AxiellProfile::Vkc) check($native->evaluate('count(/record/material_description)') === 0.0, 'Field interpretations leaked between profiles.');
+    foreach ([['124','REF-1','Musea Brugge'], ['123','NEW-1','Musea Brugge'], ['123','REF-1','Museum voor Schone Kunsten Gent']] as [$id,$number,$institution]) {
+        check(mapFixture($reference, $id, $number, $institution)->evaluate('string(/record/priref)') === $id, 'Historical identity guard bypassed.');
     }
     try {
         mapFixture($reference, id: '999', number: 'CONFLICT');
-        throw new LogicException('Conflicting historical identities were accepted.');
-    } catch (RuntimeException $error) {
-        check(str_contains($error->getMessage(), 'Conflicting Axiell identities'), 'Unexpected identity failure.');
+        throw new LogicException('Conflicting historical identities accepted.');
+    } catch (RuntimeException $e) {
+        check(str_contains($e->getMessage(), 'Conflicting Axiell identities'), 'Unexpected identity failure.');
     }
-    check($x->evaluate('string(/record/material_description)') === 'olieverf op doek', 'Verified current material description missing.');
-    check(mapFixture($reference, materialNote: "Bronnotitie\nolieverf op doek")->evaluate('count(/record/material_description)') === 0.0, 'Mu.ZEE line matching leaked into Brugge.');
-    foreach ([AxiellProfile::Muzee, AxiellProfile::Vkc] as $profile) {
-        foreach (["Arches\nets op papier", "Arches\r\n  ets   op papier  \r\nAndere notitie", 'ets op papier'] as $note) {
-            $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: $note, profile: $profile);
-            check($mapped->evaluate('count(/record/material_description)') === 1.0
-                && $mapped->evaluate('string(/record/material_description)') === 'ets op papier', 'Current Mu.ZEE material description missing in '.$profile->value);
-            check(AxiellReference::clean($mapped->evaluate('string(/record/Material/material.notes)')) === AxiellReference::clean($note), 'Extracting a description changed the full material note.');
-        }
-        foreach (["Arches\ngeen ets op papier", "Arches\nets op papier met potlood", "Arches\npapier"] as $note) {
-            $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: $note, profile: $profile);
-            check($mapped->evaluate('count(/record/material_description)') === 0.0, 'Historical description guessed from a substring or absent source text.');
-        }
-        foreach ([['224','MUZ-TEST','Mu.ZEE, Kunstmuseum aan zee'], ['222','NEW-TEST','Mu.ZEE, Kunstmuseum aan zee'], ['222','MUZ-TEST','Musea Brugge'], ['333','MUZ-AMBIGUOUS','Mu.ZEE, Kunstmuseum aan zee']] as [$id,$number,$institution]) {
-            $mapped = mapFixture($reference, $id, $number, $institution, materialNote: "Arches\nets op papier\ndrukinkt op papier", profile: $profile);
-            check($mapped->evaluate('count(/record/material_description)') === 0.0, 'Description accepted despite an identity mismatch or ambiguous reference.');
-        }
-        $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', profile: $profile,
-            materials: '<Material><material>papier</material><material.notes>Arches</material.notes></Material>'
-                ."<Material><material>drukinkt</material><material.notes>ets op papier\nets op papier</material.notes></Material>");
-        check($mapped->evaluate('count(/record/Material)') === 2.0 && $mapped->evaluate('count(/record/material_description)') === 1.0, 'Repeated material groups lost or description duplicated.');
-        $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: "Arches\nets op papier", profile: $profile,
-            extraFields: ['MaterialDescriptionTxt'=>'<material_description>Nieuwe expliciete beschrijving</material_description>']);
-        check($mapped->evaluate('string(/record/material_description)') === 'Nieuwe expliciete beschrijving', 'Note fallback overrode the explicit material description.');
-    }
-    check($x->evaluate('string(/record/Material/material/notes)') === 'canvas', 'Terminology metadata missing.');
-    check($x->evaluate('string(/record/Content_subject[content.subject="Parijs"]/content.subject.lref)') === '77', 'Known subject in ContentDate not recovered.');
-    check($x->evaluate('count(/record/content.date.period)') === 1.0 && $x->evaluate('string(/record/content.date.period)') === '19de eeuw', 'New period was guessed to be a subject.');
-    check($x->evaluate('string(/record/Content_subject[content.subject="Voorwerp"]/content.subject.type/value[@lang="neutral"])') === 'OBJECT', 'Ambiguous type not disambiguated.');
-    check($x->evaluate('string(/record/Content_subject[content.subject="Voorwerp"]/content.subject.type/value[3]/@lang)') === '1', 'Enumeration ordering/attributes changed.');
-    $x = mapFixture($reference, materialNote: 'nieuw materiaal', type: 'onderwerp');
-    check($x->evaluate('count(/record/material_description)') === 0.0, 'Old description substituted for changed current text.');
-    check($x->evaluate('string(/record/Content_subject[content.subject="Voorwerp"]/content.subject.type/value[@lang="neutral"])') === 'SUBJECT', 'Old type overrode an explicit current type.');
-    foreach ([['124','REF-1','Musea Brugge'],['123','NEW-1','Musea Brugge'],['123','REF-1','Museum voor Schone Kunsten Gent']] as [$id,$number,$institution]) {
-        $x = mapFixture($reference, $id, $number, $institution);
-        check($x->evaluate('string(/record/priref)') === $id, 'Identity guard allowed an old record interpretation.');
-        check($x->evaluate('count(/record/material_description | /record/Content_subject[content.subject="Parijs"])') === 0.0, 'Reference content crossed record identities.');
-        check($x->evaluate('string(/record/Content_subject[content.subject="Voorwerp"]/content.subject.type/value/@lang)') === 'source', 'Unverified ambiguous type was invented.');
-    }
-    $materials = '<Material><material>doek</material><material.fr>toile actuelle</material.fr><material.en>current canvas</material.en><material.part>drager</material.part><material.notes>Vrije bronnotitie</material.notes></Material>'
-        .'<Material><material>Frans ontbreekt</material><material.en>English only</material.en><material.part>lijst</material.part></Material>'
-        .'<Material><material>Engels ontbreekt</material><material.fr>Français seulement</material.fr></Material>'
-        .'<Material><material>identieke vertalingen</material><material.fr>bronze</material.fr><material.en>bronze</material.en></Material>'
-        .'<Material><material>geen vertalingen</material><material.notes>Geen vertaling</material.notes></Material>'
-        .'<Material><material>doek</material><material.part>zonder bronvertaling</material.part></Material>';
-    foreach (AxiellProfile::cases() as $profile) {
-        $x = mapFixture($reference, profile: $profile, materials: $materials);
-        check($x->evaluate('count(/record/Material)') === 6.0, 'Repeated material groups merged in '.$profile->value);
-        check($x->evaluate('string(/record/Material[1]/material.notes)') === 'Vrije bronnotitie', 'Material note mixed with translations.');
-        check($x->evaluate('string(/record/Material[2]/material.part)') === 'lijst', 'Material part shifted.');
-        if ($profile === AxiellProfile::Brugge || $profile === AxiellProfile::Muzee) {
-            check($x->evaluate('string(/record/Material[1]/material)') === 'doek' && $x->evaluate('count(/record/Material/material/*)') === 0.0, 'Native flat material format changed.');
-            continue;
-        }
-        foreach ([['toile actuelle','current canvas'],['','English only'],['Français seulement',''],['bronze','bronze']] as $index => $translations) {
-            $path = '/record/Material['.($index + 1).']/material';
-            check($x->evaluate('count('.$path.'/notes)') === 2.0, 'Material translation positions missing or duplicated.');
-            check($x->evaluate('string('.$path.'/notes[1])') === $translations[0], 'Source French material translation overwritten or shifted.');
-            check($x->evaluate('string('.$path.'/notes[2])') === $translations[1], 'Source English material translation overwritten or shifted.');
-        }
-        check($x->evaluate('count(/record/Material[5]/material/notes)') === 0.0, 'Invented translation from a free note.');
-        check($x->evaluate('string(/record/Material[6]/material/notes[1])') === ($profile === AxiellProfile::Msk ? 'ancienne traduction' : 'canvas'), 'Existing reference fallback lost for a group without source translations.');
-        foreach (['fr'=>'source français', 'en'=>'source English'] as $language => $translation) {
-            $single = mapFixture($reference, profile: $profile, materials: '<Material><material>doek</material><material.'.$language.'>'.$translation.'</material.'.$language.'></Material>');
-            check($single->evaluate('count(/record/Material/material/notes)') === 2.0, 'Reference translations filled or shifted a missing source language.');
-            check($single->evaluate('string(/record/Material/material/notes[1])') === ($language === 'fr' ? $translation : ''), 'Missing French slot was filled from stale reference data.');
-            check($single->evaluate('string(/record/Material/material/notes[2])') === ($language === 'en' ? $translation : ''), 'Missing English slot was filled from stale reference data.');
-        }
-    }
-    foreach (['Mu.ZEE, Kunstmuseum aan zee'=>AxiellProfile::Muzee, 'Musea Brugge'=>AxiellProfile::Brugge] as $institution=>$museum) {
+    foreach (['Mu.ZEE, Kunstmuseum aan zee' => AxiellProfile::Muzee, 'Musea Brugge' => AxiellProfile::Brugge] as $institution => $museum) {
         foreach ([$museum, AxiellProfile::Vkc] as $profile) {
             $fields = [];
-            foreach ($pairedFields as $field=>[$exportField,$group]) {
+            foreach ($pairedFields as $field => [$exportField,$group]) {
                 $fields[$exportField] = '';
                 foreach (['Testterm A','Onbekende term','Testterm B'] as $label) {
                     $fragment = '<'.$field.'>'.$label.'</'.$field.'>';
                     $fields[$exportField] .= $group === null ? $fragment : '<'.$group.'>'.$fragment.'</'.$group.'>';
                 }
             }
-            $x = mapFixture($reference, profile: $profile, institution: $institution, extraFields: $fields);
-            $scope = $profile === AxiellProfile::Vkc ? 'vkc/'.$museum->value : $museum->value;
-            foreach ($pairedFields as $field=>$_) {
-                check($x->evaluate('count(/record/'.$field.'.lref)') === 3.0, 'Parallel term-reference array lost a position: '.$scope.' '.$field);
-                foreach (['A',null,'B'] as $i=>$term) {
-                    $expected = $term === null ? '' : $scope.':'.$field.':'.$term;
-                    check($x->evaluate('string(/record/'.$field.'.lref['.($i+1).'])') === $expected, 'Authority reference shifted, guessed or borrowed from another museum/set.');
-                }
-                check($x->evaluate('count(/record/'.$field.'/term)') === ($profile === AxiellProfile::Vkc && $field !== 'acquisition.method' ? 3.0 : 0.0), 'Legacy native/VKC term shape changed.');
+            $x = mapFixture($reference, institution: $institution, profile: $profile, extraFields: $fields);
+            foreach ($pairedFields as $field => $_) {
+                check($x->evaluate('count(/record/'.$field.')') === 3.0, 'Current term lost.');
+                check($x->evaluate('count(/record/'.$field.'.lref)') === 3.0 && $x->evaluate('count(/record/'.$field.'.lref[normalize-space()!=""])') === 0.0, 'Historical or invented authority ID emitted.');
             }
         }
     }
-    $creator = ['CreatorTxt'=>'<Production><creator>Testmaker</creator><creator.role>testrol</creator.role><birth.place>Testplaats</birth.place></Production>'];
-    foreach (AxiellProfile::cases() as $profile) {
-        $flat = in_array($profile, [AxiellProfile::Muzee,AxiellProfile::Brugge], true);
-        $prefix = $flat ? '/record/Material/material.' : '/record/Material/material/';
-        foreach ([['https://current.example.invalid/','current-id'], ['https://current.example.invalid/',''], ['', 'current-id']] as [$source,$id]) {
-            $material = '<Material><material>doek</material><material.source>'.$source.'</material.source><material.term.number>'.$id.'</material.term.number></Material>';
-            $x = mapFixture($reference, profile: $profile, institution: 'Museum voor Schone Kunsten Gent', materials: $material);
-            check($x->evaluate('string('.$prefix.'source)') === $source, 'Current material source lost or combined with an old identifier.');
-            check($x->evaluate('string('.$prefix.'term.number)') === $id, 'Current material identifier lost or combined with an old source.');
-            check($x->evaluate('count(/record/Material/material/term)') === ($flat ? 0.0 : 1.0), 'Material structure no longer matches the museum fix.');
-        }
-    }
     foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
-        $x = mapFixture($reference, institution: 'Museum voor Schone Kunsten Gent', profile: $profile, extraFields: $creator);
-        check($x->evaluate('string(/record/Production/creator.role/notes[1])') === 'rôle test' && $x->evaluate('string(/record/Production/creator.role/notes[2])') === 'test role', 'MSK authority translations absent or reordered in VKC.');
-        check($x->evaluate('string(/record/Production/creator/birth.place/notes[1])') === 'Lieu test', 'Known birthplace metadata missing.');
+        $materials = '<Material><material>doek</material><material.fr>toile actuelle</material.fr><material.en>current canvas</material.en><material.source>https://current.invalid/</material.source><material.term.number>current-id</material.term.number></Material>'
+            .'<Material><material>doek</material><material.en>English only</material.en></Material><Material><material>doek</material></Material>';
+        $x = mapFixture($reference, institution: 'Museum voor Schone Kunsten Gent', profile: $profile, materials: $materials, extraFields: [
+            'CreatorTxt' => '<Production><creator>Testmaker</creator><creator.role>testrol</creator.role><birth.place>Testplaats</birth.place></Production>',
+        ]);
+        check($x->evaluate('string(/record/Material[1]/material/notes[1])') === 'toile actuelle' && $x->evaluate('string(/record/Material[1]/material/notes[2])') === 'current canvas', 'Explicit source translations lost.');
+        check($x->evaluate('count(/record/Material[2]/material/notes)') === 2.0 && $x->evaluate('string(/record/Material[2]/material/notes[1])') === '' && $x->evaluate('string(/record/Material[2]/material/notes[2])') === 'English only', 'English shifted into French.');
+        check($x->evaluate('count(/record/Material[3]/material/notes | /record/Production/creator.role/notes | /record/Production/creator/birth.place/notes)') === 0.0, 'Missing source translations supplemented from history.');
+        check($x->evaluate('string(/record/Material[1]/material/source)') === 'https://current.invalid/' && $x->evaluate('string(/record/Material[1]/material/term.number)') === 'current-id', 'Source vocabulary reference lost.');
     }
-    $x = mapFixture($reference, institution: 'Musea Brugge', extraFields: $creator);
-    check($x->evaluate('count(/record/Production/creator/birth.place/notes)') === 0.0, 'MSK place translations leaked to Brugge.');
+    $x = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: "Arches\nets op papier", profile: AxiellProfile::Muzee);
+    check($x->evaluate('count(/record/material_description)') === 0.0, 'Historical material-description hint still used.');
+    $x = mapFixture($reference, extraFields: ['MaterialDescriptionTxt' => '<material_description>Current explicit display</material_description>']);
+    check($x->evaluate('string(/record/material_description)') === 'Current explicit display', 'Explicit material display lost.');
     unset($reference);
 } finally {
     unlink($file); unlink($file.'l');
 }
-echo "PASS: guarded reference identities, current-value preservation, subject recovery, enum attributes and terminology enrichment\n";
-echo "PASS: source material translations take precedence in MSK/VKC; language positions, optional fields, reference fallback and flat native profiles preserved\n";
-echo "PASS: Mu.ZEE category references retain Axiell pairing; unknown categories get no invented code; other profiles unchanged\n";
-echo "PASS: parallel term references scoped to museum and set, empty positions and MSK authority translations in VKC\n";
-echo "PASS: current material source/identifier pairs override frozen metadata without mixing vocabularies; flat native fields retained\n";
+echo "PASS: source-only mapping, guarded historical OAI identities, current translations and no historical content enrichment\n";

@@ -30,7 +30,6 @@ final class AxiellRecordMapper
     {
         $elements = [];
         $warnings = [];
-        $ref = $this->reference->record($record, $profile);
         $museum = $this->museumGroups->profile($record);
         $sourceInstitution = $this->first($record, 'Naam_bewaarinstelling::institution.name');
 
@@ -50,12 +49,12 @@ final class AxiellRecordMapper
         }
         $this->addObjectCategory($elements, $record);
         $this->addObjectNames($elements, $record);
-        $this->addTitles($elements, $record, $warnings);
-        $this->addDescriptions($elements, $record);
+        $this->addTitles($elements, $record, $warnings, $profile);
+        $this->addDescriptions($elements, $record, $profile);
         $workPids = $this->addDigitalReferences($elements, $record, $warnings);
         $this->addCurrentLocations($elements, $record, $warnings);
         $this->addDimensions($elements, $record);
-        $this->addProduction($elements, $record, $warnings);
+        $this->addProduction($elements, $record, $warnings, $profile);
         $this->addSimpleRows($elements, 'Production_date', $record, [
             'production.date.start' => 'Productiedatum::Production/production.date.start',
             'production.date.end' => 'Productiedatum::Production/production.date.end',
@@ -74,8 +73,7 @@ final class AxiellRecordMapper
         // Material notes and physical descriptions are not interchangeable with this field.
         $this->addText($elements, 'material_description', $this->first($record, 'material_description')
             ?? $this->first($record, 'MaterialDescriptionTxt::material_description')
-            ?? $this->first($record, 'MaterialDescriptionTxt')
-            ?? $this->materialDescription($record, $ref));
+            ?? $this->first($record, 'MaterialDescriptionTxt'));
         $this->addTechniques($elements, $record);
         $this->addAcquisitions($elements, $record);
         $this->addText($elements, 'current_owner', $this->first($record, 'Herkomst_eigendom::current_owner'));
@@ -133,7 +131,37 @@ final class AxiellRecordMapper
             'reproduction.original_file_name' => 'Reproductie::Reproduction/reproduction.original_file_name',
             'reproduction.webpublication' => 'Reproductie::Reproduction/reproduction.webpublication',
         ]);
-        $this->addSimpleRows($elements, 'Exhibition', $record, [
+        $this->addExhibitions($elements, $record, $warnings);
+        $this->addAdditionalGroups($elements, $record);
+        $this->addContentDates($elements, $record);
+        foreach ($this->values($record, 'WebPublicationTxt::webpublication') as $tag) $elements[] = $this->enumeration('webpublication', $tag);
+        $elements = $this->enumerations($elements, $warnings);
+        $elements = $profile->elements($elements);
+        if (in_array($museum, [AxiellProfile::Brugge, AxiellProfile::Muzee], true)) {
+            // The unchanged fixes pair terms with a parallel lref array. Empty slots
+            // preserve the shape without importing historical authority identifiers.
+            $paired = [];
+            $unreferenced = [];
+            foreach ($elements as $element) {
+                $paired[] = $element;
+                if (in_array($element->name, ['object_category', 'production.period', 'content.motif.general', 'content.motif.specific', 'acquisition.method'], true)) {
+                    $paired[] = new AxiellElement($element->name.'.lref', '');
+                    $label = $element->value;
+                    foreach ($element->children as $child) if ($child->name === 'term') $label = $child->value;
+                    if ($label !== null) $unreferenced[$element->name][$label] = true;
+                }
+            }
+            $elements = $paired;
+            foreach ($unreferenced as $field => $terms) {
+                if (count($terms) > 1) $warnings[] = ['field' => $field, 'message' => 'Multiple source terms retained without authority IDs; the unchanged Catmandu fix can collapse terms with empty IDs.'];
+            }
+        }
+        return new AxiellRecord($record->objectNumber, $record->sourceIdentifier, $elements, $warnings);
+    }
+
+    private function addExhibitions(array &$elements, RecordValues $record, array &$warnings): void
+    {
+        foreach ($this->rows($record, [
             'exhibition' => 'Tentoonstelling::Exhibition/exhibition',
             'exhibition.reference_number' => 'Tentoonstelling::Exhibition/exhibition.reference_number',
             'exhibition.catalogue_number' => 'Tentoonstelling::Exhibition/exhibition.catalogue_number',
@@ -142,18 +170,25 @@ final class AxiellRecordMapper
             'exhibition.lref' => 'Tentoonstelling::Exhibition/exhibition.lref',
             'exhibition.date' => 'Tentoonstelling::Exhibition/exhibition.date',
             'exhibition.notes' => 'Tentoonstelling::Exhibition/exhibition.notes',
-        ]);
-        $this->addAdditionalGroups($elements, $record);
-        $this->addContentDates($elements, $record, $ref);
-        foreach ($this->values($record, 'WebPublicationTxt::webpublication') as $tag) $elements[] = $this->reference->enumeration('webpublication', $tag);
-        $elements = $this->enumerations($elements, $ref, $warnings);
-        // The VKC MSK fix reads the same authority translations as the museum fix.
-        // Explicit source metadata always takes precedence over the reference dictionary.
-        if ($museum === AxiellProfile::Msk && $profile === AxiellProfile::Vkc) {
-            $elements = $this->reference->enrich($elements, AxiellProfile::Msk);
+        ]) as $row) {
+            if (count($row['exhibition.date']) === 1
+                && preg_match('/^(\d{4}(?:-\d{2}){0,2})\s+-\s+(\d{4}(?:-\d{2}){0,2})$/D', trim($row['exhibition.date'][0]), $range) === 1
+                && $this->creatorNormalizer->lifeDate($range[1]) !== null
+                && $this->creatorNormalizer->lifeDate($range[2]) !== null
+                && strcmp($range[1], $range[2]) <= 0) {
+                $start = $row['exhibition.date.start'];
+                $end = $row['exhibition.date.end'];
+                if (($start === [] || $start === [$range[1]]) && ($end === [] || $end === [$range[2]])) {
+                    $row['exhibition.date.start'] = [$range[1]];
+                    $row['exhibition.date.end'] = [$range[2]];
+                } else {
+                    $warnings[] = ['field' => 'Tentoonstelling', 'message' => 'Exhibition date range conflicts with explicit bounds; source fields retained.'];
+                }
+            }
+            $children = [];
+            foreach ($row as $name => $values) array_push($children, ...$this->texts($name, $values));
+            $this->addNode($elements, 'Exhibition', $children);
         }
-        $elements = $this->reference->enrich($profile->elements($elements), $profile, museum: $museum);
-        return new AxiellRecord($record->objectNumber, $record->sourceIdentifier, $elements, $warnings);
     }
 
     /**
@@ -202,7 +237,7 @@ final class AxiellRecordMapper
     /**
      * @param list<AxiellElement> $elements
      */
-    private function addTitles(array &$elements, RecordValues $record, array &$warnings): void
+    private function addTitles(array &$elements, RecordValues $record, array &$warnings, AxiellProfile $profile): void
     {
         $titles = $this->rows($record, [
             'title' => 'Titel_nl::Title/title',
@@ -230,6 +265,7 @@ final class AxiellRecordMapper
             'title.language' => 'Vertaalde_titel::Title/title.language',
             'title.type' => 'Vertaalde_titel::Title/title.type',
         ]);
+        $dutchTitles = [];
         foreach ($rows as $row) {
             if ($row['title.translation'] === []) continue;
             $languages = array_values(array_unique(array_map($this->labelNormalizer->titleLanguage(...), $row['title.language'])));
@@ -239,7 +275,7 @@ final class AxiellRecordMapper
                 continue;
             }
             if ($languages[0] === 'Nederlands') {
-                $this->addNode($elements, 'Title', [
+                $this->addNode($dutchTitles, 'Title', [
                     ...$this->texts('title', $row['title.translation']),
                     AxiellElement::text('title.language', 'Nederlands'),
                     ...$this->texts('title.type', $row['title.type']),
@@ -252,18 +288,49 @@ final class AxiellRecordMapper
                 ...$this->texts('title.type', $row['title.type']),
             ]);
         }
+        // Brugge's museum fix uses only the first Dutch Title. An explicitly
+        // labelled Dutch translation takes that slot; original titles stay in XML.
+        $elements = $profile === AxiellProfile::Brugge
+            ? [...$dutchTitles, ...$elements] : [...$elements, ...$dutchTitles];
     }
 
     /**
      * @param list<AxiellElement> $elements
      */
-    private function addDescriptions(array &$elements, RecordValues $record): void
+    private function addDescriptions(array &$elements, RecordValues $record, AxiellProfile $profile): void
     {
-        $this->addSimpleRows($elements, 'Description', $record, [
+        $rows = $this->rows($record, [
             'description' => 'Beschrijving::Description/description',
             'description.name' => 'Beschrijving::Description/description.name',
             'description.date' => 'Beschrijving::Description/description.date',
+            'description.language' => 'Beschrijving::Description/description.language',
         ]);
+        // These fixes assign languages by row position. Unknown languages belong
+        // after the reserved slots, where the fixes emit unlabelled descriptions.
+        $slots = $profile === AxiellProfile::Msk || ($profile === AxiellProfile::Vkc && $this->isMsk($record))
+            ? ['Nederlands', 'Frans', 'Engels']
+            : ($profile === AxiellProfile::Vkc && $this->museumGroups->profile($record) === AxiellProfile::Muzee ? ['Nederlands'] : []);
+        if ($rows === [] || $slots === []) {
+            foreach ($rows as $row) {
+                $children = [];
+                foreach ($row as $name => $values) array_push($children, ...$this->texts($name, $values));
+                $this->addNode($elements, 'Description', $children);
+            }
+            return;
+        }
+        $reserved = array_fill_keys($slots, []);
+        $remaining = [];
+        foreach ($rows as $row) {
+            $language = count($row['description.language']) === 1 ? $this->labelNormalizer->titleLanguage($row['description.language'][0]) : null;
+            if ($language !== null && isset($reserved[$language]) && $reserved[$language] === []) $reserved[$language] = $row;
+            else $remaining[] = $row;
+        }
+        foreach ([...array_values($reserved), ...$remaining] as $row) {
+            $children = [];
+            foreach ($row as $name => $values) array_push($children, ...$this->texts($name, $values));
+            // Deliberately explicit empty content: Catmandu must count this slot.
+            $elements[] = new AxiellElement('Description', null, $children ?: [new AxiellElement('description', '')]);
+        }
     }
 
     /**
@@ -437,8 +504,8 @@ final class AxiellRecordMapper
                         AxiellElement::text('dimension.unit', $dimension['unit']),
                         AxiellElement::text('dimension.value', $dimension['value']),
                         AxiellElement::text('dimension.part', $dimension['part']),
-                        ...$this->texts('dimension.precision', $row['precision']),
-                        ...$this->texts('dimension.notes', $row['notes']),
+                        ...$this->texts('dimension.precision', array_values(array_unique([...$row['precision'], ...($dimension['precision'] ?? [])]))),
+                        ...$this->texts('dimension.notes', array_values(array_unique([...$row['notes'], ...($dimension['notes'] ?? [])]))),
                     ]);
                 }
             }
@@ -451,7 +518,7 @@ final class AxiellRecordMapper
     /**
      * @param list<AxiellElement> $elements
      */
-    private function addProduction(array &$elements, RecordValues $record, array &$warnings): void
+    private function addProduction(array &$elements, RecordValues $record, array &$warnings, AxiellProfile $profile): void
     {
         $paths = [
             'name' => 'Naam_vervaardiger::Production/creator',
@@ -468,7 +535,10 @@ final class AxiellRecordMapper
                 $paths[$event.'.date.'.$part] = 'Naam_vervaardiger::Production/'.$event.'.date.'.$part;
             }
         }
-        foreach ($this->rows($record, $paths) as $row) {
+        $rows = $this->rows($record, $paths);
+        $places = array_values(array_unique(array_map($this->labelNormalizer->productionPlace(...), $this->values($record, 'Naam_plaats_vervaardiging::production.place'))));
+        $attachPlace = $profile === AxiellProfile::Msk && count($rows) === 1 && count($rows[0]['name']) === 1 && count($places) === 1;
+        foreach ($rows as $row) {
             $creator = $this->texts('name', $row['name']);
             $dates = [];
             foreach (['birth', 'death'] as $event) {
@@ -497,11 +567,15 @@ final class AxiellRecordMapper
                 ...$this->texts('creator.qualifier', $row['qualifier']),
                 ...$this->texts('creator.history', $row['history']),
                 ...$this->texts('creator.role.notes', $row['role_notes']),
+                AxiellElement::text('production.place', $attachPlace ? $places[0] : null),
             ]);
         }
         // The source has no link between these places and individual creators.
-        foreach (array_unique($this->values($record, 'Naam_plaats_vervaardiging::production.place')) as $place) {
-            $this->addNode($elements, 'Production', [AxiellElement::text('production.place', $this->labelNormalizer->productionPlace($place))]);
+        if (!$attachPlace) foreach ($places as $place) {
+            $this->addNode($elements, 'Production', [AxiellElement::text('production.place', $place)]);
+        }
+        if ($profile === AxiellProfile::Msk && $places !== [] && !$attachPlace) {
+            $warnings[] = ['field' => 'Naam_plaats_vervaardiging', 'message' => 'Object-level production place retained separately: no unambiguous single creator/place association for the MSK fix.'];
         }
         $this->addSimpleRows($elements, 'Production', $record, [
             'production.notes' => 'ProductionNotesTxt::Production/production.notes',
@@ -557,67 +631,46 @@ final class AxiellRecordMapper
         }
     }
 
-    private function addContentDates(array &$elements, RecordValues $record, array $ref): void
+    private function addContentDates(array &$elements, RecordValues $record): void
     {
-        $subjects = $this->values($record, 'ContentSubjectTxt::Content_subject/content.subject');
-        foreach ($this->values($record, 'ContentDateTxt::content.date.period') as $value) {
-            $hint = $ref['content_dates'][AxiellReference::clean($value)] ?? null;
-            if ($hint !== null) {
-                if (in_array($value, $subjects, true)) continue;
-                $this->addNode($elements, 'Content_subject', [
-                    AxiellElement::text('content.subject', $value),
-                    AxiellElement::text('content.subject.lref', $hint['lref']),
-                    $hint['type'] === null ? null : $this->reference->element($hint['type']),
-                ]);
-            } else {
-                $this->addText($elements, 'content.date.period', $value);
-            }
-        }
-        foreach (['start','end','note','position'] as $field) {
+        foreach (['period', 'start', 'end', 'note', 'position'] as $field) {
             foreach ($this->values($record, 'ContentDateTxt::content.date.'.$field) as $value) $this->addText($elements, 'content.date.'.$field, $value);
         }
     }
 
-    private function materialDescription(RecordValues $record, array $ref): ?string
+    /** Structural enum slots required by the fixes, not historical translations. */
+    private function enumeration(string $name, string $value): AxiellElement
     {
-        $descriptions = $ref['material_description'] ?? [];
-        if (count($descriptions) !== 1) return null;
-
-        $splitNotes = $this->museumGroups->profile($record) === AxiellProfile::Muzee;
-        foreach ($this->values($record, 'Term_materiaal::Material/material.notes') as $note) {
-            if (AxiellReference::clean($note) === $descriptions[0]) return $descriptions[0];
-            if (!$splitNotes) continue;
-
-            // Mu.ZEE combines the display text and other notes on separate lines.
-            // Only accept a complete current line matching this record's verified description.
-            foreach (preg_split('/\R/u', $note) ?: [] as $line) {
-                if (AxiellReference::clean($line) === $descriptions[0]) return $descriptions[0];
-            }
-        }
-
-        return null;
+        $label = match ($value) {
+            'eigen afgebeelde locatie' => 'geografie',
+            'eigen afgebeelde gebeurtenis' => 'activiteit',
+            'afgebeelde gebeurtenis' => 'gebeurtenis',
+            default => $value,
+        };
+        // The MSK fix reads the Dutch value at index 2. Never fill the English
+        // or neutral-code positions from a former Axiell export.
+        return new AxiellElement($name, null, [
+            new AxiellElement('value', '', [], ['lang' => 'neutral']),
+            new AxiellElement('value', '', [], ['lang' => '0']),
+            new AxiellElement('value', $label, [], ['lang' => '1']),
+        ]);
     }
 
-    private function enumerations(array $elements, array $ref, array &$warnings): array
+    private function enumerations(array $elements, array &$warnings): array
     {
-        $types = ['Content_person'=>['content.person.name','content.person.name.type'],'Content_subject'=>['content.subject','content.subject.type'],'Associated_person'=>['association.person','association.person.type'],'Associated_subject'=>['association.subject','association.subject.type']];
+        $types = ['Content_person' => 'content.person.name.type', 'Content_subject' => 'content.subject.type',
+            'Associated_person' => 'association.person.type', 'Associated_subject' => 'association.subject.type',
+            'Rights' => 'rights.consent_status', 'Reproduction' => 'reproduction.webpublication'];
         foreach ($elements as $index => $element) {
-            $label = '';
-            if (isset($types[$element->name])) {
-                [$name, $type] = $types[$element->name];
-                foreach ($element->children as $child) if ($child->name === $name) $label = $child->value ?? '';
-            } else {
-                $type = match ($element->name) { 'Rights'=>'rights.consent_status', 'Reproduction'=>'reproduction.webpublication', default=>'' };
-            }
+            $type = $types[$element->name] ?? '';
             $children = [];
             foreach ($element->children as $child) {
                 if ($child->name === $type && $child->value !== null) {
-                    $verified = $ref['types'][$type.'|'.AxiellReference::clean($label)] ?? null;
-                    if ($verified === null && in_array($child->value, ['institution','eigen afgebeeld object'], true)) {
-                        $warnings[] = ['field'=>$type, 'message'=>'Ambiguous source type retained without guessing: '.$child->value];
-                        $child = new AxiellElement($type, null, [new AxiellElement('value',$child->value,[],['lang'=>'source'])]);
+                    if (in_array($child->value, ['institution', 'eigen afgebeeld object'], true)) {
+                        $warnings[] = ['field' => $type, 'message' => 'Ambiguous source type retained without guessing: '.$child->value];
+                        $child = new AxiellElement($type, null, [new AxiellElement('value', $child->value, [], ['lang' => 'source'])]);
                     } else {
-                        $child = $this->reference->enumeration($type, $child->value, $verified);
+                        $child = $this->enumeration($type, $child->value);
                     }
                 }
                 $children[] = $child;

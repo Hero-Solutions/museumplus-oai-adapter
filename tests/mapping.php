@@ -77,7 +77,7 @@ check($x->evaluate('string(/record/Production[3]/creator.date_of_birth)') === '1
 check($x->evaluate('string(/record/Production[3]/creator.date_of_death)') === '2000', 'Duplicate dates not normalised.');
 check($x->evaluate('count(/record/Production[4]/creator.date_of_birth)') === 0.0 && count($warnings) === 1, 'Conflicting dates guessed or not reported.');
 check($x->evaluate('count(/record/Production[creator and production.place])') === 0.0, 'Object-level place attached to an arbitrary creator.');
-check($x->evaluate('string(/record/Production/production.place)') === 'Gent', 'Production place lost.');
+check($x->evaluate('string(/record/Production/production.place)') === 'Gent, België', 'Production place truncated.');
 foreach (['2023-02-29', '2020-13', '1900;1901', 'circa 1900', '1900;'] as $invalid) {
     check((new CreatorNormalizer())->lifeDate($invalid) === null, 'Invalid date accepted: '.$invalid);
 }
