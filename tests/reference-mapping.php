@@ -51,6 +51,12 @@ $entries = [
     'terms:vkc|Production/creator.role|testrol'=>[leaf('notes','test role')],
     'terms:mskObj|Production/creator/birth.place|Testplaats'=>[leaf('notes','Lieu test'), leaf('notes','Test place')],
 ];
+foreach (['muzee', 'vkc'] as $profile) {
+    $entries['records:'.$profile.'|222'] = ['number'=>'MUZ-TEST','institution'=>'Mu.ZEE, Kunstmuseum aan zee','priref'=>'222',
+        'material_description'=>['ets op papier']];
+    $entries['records:'.$profile.'|333'] = ['number'=>'MUZ-AMBIGUOUS','institution'=>'Mu.ZEE, Kunstmuseum aan zee','priref'=>'333',
+        'material_description'=>['ets op papier', 'drukinkt op papier']];
+}
 $pairedFields = [
     'object_category'=>['ObjectCategoryTxt', 'Object_category'],
     'production.period'=>['PeriodTxt', 'Production_period'],
@@ -101,6 +107,30 @@ try {
         check(str_contains($error->getMessage(), 'Conflicting Axiell identities'), 'Unexpected identity failure.');
     }
     check($x->evaluate('string(/record/material_description)') === 'olieverf op doek', 'Verified current material description missing.');
+    check(mapFixture($reference, materialNote: "Bronnotitie\nolieverf op doek")->evaluate('count(/record/material_description)') === 0.0, 'Mu.ZEE line matching leaked into Brugge.');
+    foreach ([AxiellProfile::Muzee, AxiellProfile::Vkc] as $profile) {
+        foreach (["Arches\nets op papier", "Arches\r\n  ets   op papier  \r\nAndere notitie", 'ets op papier'] as $note) {
+            $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: $note, profile: $profile);
+            check($mapped->evaluate('count(/record/material_description)') === 1.0
+                && $mapped->evaluate('string(/record/material_description)') === 'ets op papier', 'Current Mu.ZEE material description missing in '.$profile->value);
+            check(AxiellReference::clean($mapped->evaluate('string(/record/Material/material.notes)')) === AxiellReference::clean($note), 'Extracting a description changed the full material note.');
+        }
+        foreach (["Arches\ngeen ets op papier", "Arches\nets op papier met potlood", "Arches\npapier"] as $note) {
+            $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: $note, profile: $profile);
+            check($mapped->evaluate('count(/record/material_description)') === 0.0, 'Historical description guessed from a substring or absent source text.');
+        }
+        foreach ([['224','MUZ-TEST','Mu.ZEE, Kunstmuseum aan zee'], ['222','NEW-TEST','Mu.ZEE, Kunstmuseum aan zee'], ['222','MUZ-TEST','Musea Brugge'], ['333','MUZ-AMBIGUOUS','Mu.ZEE, Kunstmuseum aan zee']] as [$id,$number,$institution]) {
+            $mapped = mapFixture($reference, $id, $number, $institution, materialNote: "Arches\nets op papier\ndrukinkt op papier", profile: $profile);
+            check($mapped->evaluate('count(/record/material_description)') === 0.0, 'Description accepted despite an identity mismatch or ambiguous reference.');
+        }
+        $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', profile: $profile,
+            materials: '<Material><material>papier</material><material.notes>Arches</material.notes></Material>'
+                ."<Material><material>drukinkt</material><material.notes>ets op papier\nets op papier</material.notes></Material>");
+        check($mapped->evaluate('count(/record/Material)') === 2.0 && $mapped->evaluate('count(/record/material_description)') === 1.0, 'Repeated material groups lost or description duplicated.');
+        $mapped = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: "Arches\nets op papier", profile: $profile,
+            extraFields: ['MaterialDescriptionTxt'=>'<material_description>Nieuwe expliciete beschrijving</material_description>']);
+        check($mapped->evaluate('string(/record/material_description)') === 'Nieuwe expliciete beschrijving', 'Note fallback overrode the explicit material description.');
+    }
     check($x->evaluate('string(/record/Material/material/notes)') === 'canvas', 'Terminology metadata missing.');
     check($x->evaluate('string(/record/Content_subject[content.subject="Parijs"]/content.subject.lref)') === '77', 'Known subject in ContentDate not recovered.');
     check($x->evaluate('count(/record/content.date.period)') === 1.0 && $x->evaluate('string(/record/content.date.period)') === '19de eeuw', 'New period was guessed to be a subject.');

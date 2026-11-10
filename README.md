@@ -188,6 +188,11 @@ dan Engels. Een ontbrekende taal houdt een lege plaats; vrije `material.notes`
 blijven apart. Brugge en Mu.ZEE behouden hun platte materiaalveld. Techniek heeft
 in de huidige MuseumPlus-export nog geen Franse of Engelse bronvelden.
 
+Bij Mu.ZEE wordt een bekende materiaalbeschrijving ook herkend als afzonderlijke
+regel in `material.notes`, voor zowel `muzee` als `vkc`. De tekst moet overeenkomen
+met de Axiell-referentie van hetzelfde record en nog in de huidige bron staan.
+De volledige materiaalnotitie blijft behouden.
+
 Raw responses staan in `var/museumplus-raw/`: één ongewijzigde `.xml` per poging,
 met `.json` voor positie, status en checksum. Foutantwoorden blijven beschikbaar
 tot de volgende importpoging; overgeslagen ongeldige objecten blijven ook in

@@ -581,8 +581,21 @@ final class AxiellRecordMapper
     private function materialDescription(RecordValues $record, array $ref): ?string
     {
         $descriptions = $ref['material_description'] ?? [];
-        $notes = array_map(AxiellReference::clean(...), $this->values($record, 'Term_materiaal::Material/material.notes'));
-        return count($descriptions) === 1 && in_array($descriptions[0], $notes, true) ? $descriptions[0] : null;
+        if (count($descriptions) !== 1) return null;
+
+        $splitNotes = $this->museumGroups->profile($record) === AxiellProfile::Muzee;
+        foreach ($this->values($record, 'Term_materiaal::Material/material.notes') as $note) {
+            if (AxiellReference::clean($note) === $descriptions[0]) return $descriptions[0];
+            if (!$splitNotes) continue;
+
+            // Mu.ZEE combines the display text and other notes on separate lines.
+            // Only accept a complete current line matching this record's verified description.
+            foreach (preg_split('/\R/u', $note) ?: [] as $line) {
+                if (AxiellReference::clean($line) === $descriptions[0]) return $descriptions[0];
+            }
+        }
+
+        return null;
     }
 
     private function enumerations(array $elements, array $ref, array &$warnings): array
