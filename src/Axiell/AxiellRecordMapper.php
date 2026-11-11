@@ -70,10 +70,7 @@ final class AxiellRecordMapper
         foreach ($this->values($record, 'Periode::Production_period/production.period.notes') as $note) $this->addText($elements, 'production.period.notes', $note);
         $this->addMaterials($elements, $record);
         $this->addText($elements, 'physical_description', $this->first($record, 'Physical_description_NL'));
-        // Material notes and physical descriptions are not interchangeable with this field.
-        $this->addText($elements, 'material_description', $this->first($record, 'material_description')
-            ?? $this->first($record, 'MaterialDescriptionTxt::material_description')
-            ?? $this->first($record, 'MaterialDescriptionTxt'));
+        $this->addText($elements, 'material_description', $this->materialDescription($record, $museum, $warnings));
         $this->addTechniques($elements, $record);
         $this->addAcquisitions($elements, $record);
         $this->addText($elements, 'current_owner', $this->first($record, 'Herkomst_eigendom::current_owner'));
@@ -138,23 +135,21 @@ final class AxiellRecordMapper
         $elements = $this->enumerations($elements, $warnings);
         $elements = $profile->elements($elements);
         if (in_array($museum, [AxiellProfile::Brugge, AxiellProfile::Muzee], true)) {
-            // The unchanged fixes pair terms with a parallel lref array. Empty slots
-            // preserve the shape without importing historical authority identifiers.
+            // Catmandu uses these scalar keys to associate parallel term/ID arrays.
+            // Empty XML becomes a Perl hash reference, not an empty string. These
+            // adapter-local keys identify labels, not MuseumPlus thesaurus entries.
             $paired = [];
-            $unreferenced = [];
             foreach ($elements as $element) {
                 $paired[] = $element;
                 if (in_array($element->name, ['object_category', 'production.period', 'content.motif.general', 'content.motif.specific', 'acquisition.method'], true)) {
-                    $paired[] = new AxiellElement($element->name.'.lref', '');
                     $label = $element->value;
                     foreach ($element->children as $child) if ($child->name === 'term') $label = $child->value;
-                    if ($label !== null) $unreferenced[$element->name][$label] = true;
+                    if ($label === null || $label === '') throw new \LogicException('Cannot associate a term without a label: '.$element->name);
+                    $key = 'adapter-local:'.$museum->value.':'.$element->name.':'.hash('sha256', $label);
+                    $paired[] = new AxiellElement($element->name.'.lref', $key);
                 }
             }
             $elements = $paired;
-            foreach ($unreferenced as $field => $terms) {
-                if (count($terms) > 1) $warnings[] = ['field' => $field, 'message' => 'Multiple source terms retained without authority IDs; the unchanged Catmandu fix can collapse terms with empty IDs.'];
-            }
         }
         return new AxiellRecord($record->objectNumber, $record->sourceIdentifier, $elements, $warnings);
     }
@@ -740,6 +735,27 @@ final class AxiellRecordMapper
                 ...$this->texts('material.notes', $row['notes']),
             ]);
         }
+    }
+
+    private function materialDescription(RecordValues $record, ?AxiellProfile $museum, array &$warnings): ?string
+    {
+        $explicit = $this->first($record, 'material_description')
+            ?? $this->first($record, 'MaterialDescriptionTxt::material_description')
+            ?? $this->first($record, 'MaterialDescriptionTxt');
+        if ($explicit !== null || $museum !== AxiellProfile::Muzee) return $explicit;
+
+        // Mu.ZEE's export carries the display in material.notes. Retain the whole
+        // source value, including any prefix/context; never select a historical
+        // substring or assume that a material's name/part is a description.
+        $notes = [];
+        foreach ($this->values($record, 'Term_materiaal::Material/material.notes') as $note) {
+            $text = AxiellElement::text('material_description', $note);
+            if ($text !== null) $notes[$text->value] = $note;
+        }
+        if (count($notes) === 1) return reset($notes);
+        if (count($notes) > 1) $warnings[] = ['field' => 'material_description', 'message' => 'Different material notes retained in Material; no unambiguous single display description.'];
+
+        return null;
     }
 
     /**

@@ -108,7 +108,10 @@ try {
             $x = mapFixture($reference, institution: $institution, profile: $profile, extraFields: $fields);
             foreach ($pairedFields as $field => $_) {
                 check($x->evaluate('count(/record/'.$field.')') === 3.0, 'Current term lost.');
-                check($x->evaluate('count(/record/'.$field.'.lref)') === 3.0 && $x->evaluate('count(/record/'.$field.'.lref[normalize-space()!=""])') === 0.0, 'Historical or invented authority ID emitted.');
+                check($x->evaluate('count(/record/'.$field.'.lref)') === 3.0, 'Parallel term keys missing.');
+                foreach ($x->query('/record/'.$field.'.lref') as $key) {
+                    check(str_starts_with($key->textContent, 'adapter-local:'.$museum->value.':'.$field.':'), 'Historical authority ID reused instead of an adapter-local key.');
+                }
             }
         }
     }
@@ -124,7 +127,7 @@ try {
         check($x->evaluate('string(/record/Material[1]/material/source)') === 'https://current.invalid/' && $x->evaluate('string(/record/Material[1]/material/term.number)') === 'current-id', 'Source vocabulary reference lost.');
     }
     $x = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: "Arches\nets op papier", profile: AxiellProfile::Muzee);
-    check($x->evaluate('count(/record/material_description)') === 0.0, 'Historical material-description hint still used.');
+    check($x->evaluate('string(/record/material_description)') === 'Arches ets op papier', 'Material note must remain complete, without the historical substring hint.');
     $x = mapFixture($reference, extraFields: ['MaterialDescriptionTxt' => '<material_description>Current explicit display</material_description>']);
     check($x->evaluate('string(/record/material_description)') === 'Current explicit display', 'Explicit material display lost.');
     unset($reference);

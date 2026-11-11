@@ -48,7 +48,8 @@ foreach (AxiellProfile::cases() as $profile) {
     check($x->evaluate('string(/record/Content_subject/content.subject.type/value[@lang="1"])') === 'onderwerp', 'Subject type missing.');
     check($x->evaluate('count(/record/Dimension)') === 1.0 && $x->evaluate('string(/record/Dimension/dimension.type)') === 'afmetingen object', 'Guessed missing measurements.');
     check($x->evaluate('string(/record/Dimension/dimension.notes)') === 'met lijst', 'Dimension note lost.');
-    check($x->evaluate('count(/record/material_description | /record/object_category.lref[normalize-space()!=""])') === 0.0, 'Fabricated material description or local authority ID.');
+    check($x->evaluate('count(/record/material_description)') === 0.0, 'Material description inferred from a Brugge note.');
+    check(str_starts_with($x->evaluate('string(/record/object_category.lref)'), 'adapter-local:musea_brugge:object_category:'), 'Scalar adapter-local category key missing.');
     check($x->evaluate('string(/record/object_category.uri)') === 'https://vocabulary.invalid/123', 'Category URI lost.');
 }
 [$x] = mapped(['MaterialDescriptionTxt'=>'<material_description>olieverf op doek</material_description>'], AxiellProfile::Muzee);

@@ -93,10 +93,17 @@ De afzonderlijk ingestelde FR/EN-namen van MSK Gent blijven behouden.
 Materiaalvertalingen en bronverwijzingen die MuseumPlus zelf levert, blijven doorstromen.
 
 De ongewijzigde Brugge- en Mu.ZEE-fixes gebruiken bij sommige termen een parallelle
-lijst met thesaurus-ID's. Zonder bron-ID blijven die posities leeg. Bij meerdere
-termen meldt de adapter dat de fix ze kan laten samenvallen. De adapter bewaart
-alle termen en verzint geen ID's; voor volledig behoud in LIDO moet dit bron-/fixcontract
-nog worden opgelost.
+lijst met ID's. Daarvoor maakt de adapter stabiele sleutels met prefix
+`adapter-local:`, afgeleid van museum, veld en term. Het zijn lokale koppelsleutels,
+geen oorspronkelijke thesaurusnummers. Zo blijven meerdere termen behouden en
+verschijnen geen interne Perl-verwijzingen (`HASH(...)`) in de LIDO-uitvoer.
+De bestaande fixes zetten hierbij nog hun vaste bronlabel `Adlib`.
+
+Een expliciet materiaalomschrijvingsveld krijgt voorrang. Voor Mu.ZEE gebruikt de
+adapter anders één unieke, niet-lege `material.notes` als omschrijving, in de
+museumset én VKC. De volledige nota blijft behouden; er worden geen zinsdelen
+uit geselecteerd. Bij verschillende nota's blijft de omschrijving leeg en volgt
+een melding. De oorspronkelijke nota's blijven steeds bij hun materiaal staan.
 
 Vertaalde titels worden alleen opgenomen met een herkenbaar, eenduidig
 taallabel (NL/FR/EN/DE). Zonder bruikbaar label worden ze overgeslagen en gemeld;
