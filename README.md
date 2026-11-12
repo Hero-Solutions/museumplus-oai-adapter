@@ -99,11 +99,12 @@ geen oorspronkelijke thesaurusnummers. Zo blijven meerdere termen behouden en
 verschijnen geen interne Perl-verwijzingen (`HASH(...)`) in de LIDO-uitvoer.
 De bestaande fixes zetten hierbij nog hun vaste bronlabel `Adlib`.
 
-Een expliciet materiaalomschrijvingsveld krijgt voorrang. Voor Mu.ZEE gebruikt de
-adapter anders één unieke, niet-lege `material.notes` als omschrijving, in de
-museumset én VKC. De volledige nota blijft behouden; er worden geen zinsdelen
-uit geselecteerd. Bij verschillende nota's blijft de omschrijving leeg en volgt
-een melding. De oorspronkelijke nota's blijven steeds bij hun materiaal staan.
+De algemene materiaalomschrijving komt uit `physical_description`. Voor Mu.ZEE
+geeft de adapter die ook door als `material_description`, de veldnaam die hun
+museum- en VKC-fix verwachten. Oudere expliciete materiaalomschrijvingsvelden
+blijven ondersteund als `physical_description` ontbreekt. Er wordt nooit een
+omschrijving uit `material.notes` afgeleid. De afzonderlijke materiaaltermen
+en oorspronkelijke nota's blijven bij hun materiaal staan.
 
 Vertaalde titels worden alleen opgenomen met een herkenbaar, eenduidig
 taallabel (NL/FR/EN/DE). Zonder bruikbaar label worden ze overgeslagen en gemeld;
@@ -203,16 +204,11 @@ Een ontbrekend afmetingstype wordt alleen aangevuld als `duur` wanneer de
 bronnotitie dit uitdrukkelijk vermeldt op de eerste regel. Waarde en eenheid
 blijven behouden.
 
-Materiaalvertalingen uit `material.fr` en `material.en` krijgen voorrang op de
-Axiell-referenties. MSK en VKC ontvangen ze als `material/notes`: eerst Frans,
+Materiaalvertalingen komen uitsluitend uit `material.fr` en `material.en`.
+MSK en VKC ontvangen ze als `material/notes`: eerst Frans,
 dan Engels. Een ontbrekende taal houdt een lege plaats; vrije `material.notes`
 blijven apart. Brugge en Mu.ZEE behouden hun platte materiaalveld. Techniek heeft
 in de huidige MuseumPlus-export nog geen Franse of Engelse bronvelden.
-
-Bij Mu.ZEE wordt een bekende materiaalbeschrijving ook herkend als afzonderlijke
-regel in `material.notes`, voor zowel `muzee` als `vkc`. De tekst moet overeenkomen
-met de Axiell-referentie van hetzelfde record en nog in de huidige bron staan.
-De volledige materiaalnotitie blijft behouden.
 
 Raw responses staan in `var/museumplus-raw/`: één ongewijzigde `.xml` per poging,
 met `.json` voor positie, status en checksum. Foutantwoorden blijven beschikbaar

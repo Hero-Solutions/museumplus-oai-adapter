@@ -69,8 +69,13 @@ final class AxiellRecordMapper
         array_push($elements, ...$periods);
         foreach ($this->values($record, 'Periode::Production_period/production.period.notes') as $note) $this->addText($elements, 'production.period.notes', $note);
         $this->addMaterials($elements, $record);
-        $this->addText($elements, 'physical_description', $this->first($record, 'Physical_description_NL'));
-        $this->addText($elements, 'material_description', $this->materialDescription($record, $museum, $warnings));
+        $physicalDescription = $this->first($record, 'Physical_description_NL');
+        $this->addText($elements, 'physical_description', $physicalDescription);
+        // Mu.ZEE's museum and VKC fixes expect this source field under a different name.
+        $this->addText($elements, 'material_description', ($museum === AxiellProfile::Muzee ? $physicalDescription : null)
+            ?? $this->first($record, 'material_description')
+            ?? $this->first($record, 'MaterialDescriptionTxt::material_description')
+            ?? $this->first($record, 'MaterialDescriptionTxt'));
         $this->addTechniques($elements, $record);
         $this->addAcquisitions($elements, $record);
         $this->addText($elements, 'current_owner', $this->first($record, 'Herkomst_eigendom::current_owner'));
@@ -735,27 +740,6 @@ final class AxiellRecordMapper
                 ...$this->texts('material.notes', $row['notes']),
             ]);
         }
-    }
-
-    private function materialDescription(RecordValues $record, ?AxiellProfile $museum, array &$warnings): ?string
-    {
-        $explicit = $this->first($record, 'material_description')
-            ?? $this->first($record, 'MaterialDescriptionTxt::material_description')
-            ?? $this->first($record, 'MaterialDescriptionTxt');
-        if ($explicit !== null || $museum !== AxiellProfile::Muzee) return $explicit;
-
-        // Mu.ZEE's export carries the display in material.notes. Retain the whole
-        // source value, including any prefix/context; never select a historical
-        // substring or assume that a material's name/part is a description.
-        $notes = [];
-        foreach ($this->values($record, 'Term_materiaal::Material/material.notes') as $note) {
-            $text = AxiellElement::text('material_description', $note);
-            if ($text !== null) $notes[$text->value] = $note;
-        }
-        if (count($notes) === 1) return reset($notes);
-        if (count($notes) > 1) $warnings[] = ['field' => 'material_description', 'message' => 'Different material notes retained in Material; no unambiguous single display description.'];
-
-        return null;
     }
 
     /**

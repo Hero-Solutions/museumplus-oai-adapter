@@ -127,7 +127,8 @@ try {
         check($x->evaluate('string(/record/Material[1]/material/source)') === 'https://current.invalid/' && $x->evaluate('string(/record/Material[1]/material/term.number)') === 'current-id', 'Source vocabulary reference lost.');
     }
     $x = mapFixture($reference, '222', 'MUZ-TEST', 'Mu.ZEE, Kunstmuseum aan zee', materialNote: "Arches\nets op papier", profile: AxiellProfile::Muzee);
-    check($x->evaluate('string(/record/material_description)') === 'Arches ets op papier', 'Material note must remain complete, without the historical substring hint.');
+    check($x->evaluate('count(/record/material_description)') === 0.0, 'Material description inferred from a note or historical hint.');
+    check($x->evaluate('string(/record/Material/material.notes)') === 'Arches ets op papier', 'Current material note lost or shortened.');
     $x = mapFixture($reference, extraFields: ['MaterialDescriptionTxt' => '<material_description>Current explicit display</material_description>']);
     check($x->evaluate('string(/record/material_description)') === 'Current explicit display', 'Explicit material display lost.');
     unset($reference);

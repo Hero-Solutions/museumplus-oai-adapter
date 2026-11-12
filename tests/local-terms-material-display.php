@@ -69,25 +69,30 @@ check($byMuseum[0]['object_category']['Term A'] !== $byMuseum[1]['object_categor
 $museum = ['MuseumTxt'=>'<institution.name>Mu.ZEE, Kunstmuseum aan zee</institution.name>'];
 $materials = static fn(array $notes): string => implode('', array_map(static fn($note)=>'<Material><material>papier</material><material.part>drager</material.part><material.notes>'.htmlspecialchars($note,ENT_QUOTES|ENT_XML1,'UTF-8').'</material.notes></Material>', $notes));
 foreach ([AxiellProfile::Muzee,AxiellProfile::Vkc] as $profile) {
-    [$x] = mapped($museum+['MaterialTxt'=>$materials(['Oost-Indische inkt op papier'])],$profile);
-    check($x->evaluate('string(/record/material_description)') === 'Oost-Indische inkt op papier', 'Raw material description not restored.');
+    [$x,$warnings] = mapped($museum+['MaterialTxt'=>$materials(['Oost-Indische inkt op papier']),'physical_description'=>'schade: één lint gescheurd'],$profile);
+    check($x->evaluate('string(/record/material_description)') === 'schade: één lint gescheurd' && $warnings === [], 'Mu.ZEE physical description not passed through under the name expected by its fixes.');
+    check($x->evaluate('string(/record/physical_description)') === 'schade: één lint gescheurd', 'Separate physical description lost.');
     check($x->evaluate('string(/record/Material/material.notes)') === 'Oost-Indische inkt op papier' && $x->evaluate('string(/record/Material/material.part)') === 'drager', 'Original note or part lost.');
     [$x,$warnings] = mapped($museum+['MaterialTxt'=>$materials(['Arches'."\n".'ets op papier','Arches  ets op papier',''])],$profile);
-    check($x->evaluate('string(/record/material_description)') === 'Arches ets op papier' && $warnings === [], 'Source context stripped or equivalent notes treated as ambiguous.');
-    [$x] = mapped($museum+['MaterialTxt'=>$materials(['Letterlijk &amp; op papier'])],$profile);
-    check($x->evaluate('string(/record/material_description)') === $x->evaluate('string(/record/Material/material.notes)'), 'Material description decoded twice.');
+    check($x->evaluate('count(/record/material_description)') === 0.0 && $warnings === [], 'Repeated equivalent notes inferred a material description.');
+    check($x->evaluate('count(/record/Material/material.notes)') === 2.0 && $x->evaluate('string(/record/Material/material.notes)') === 'Arches ets op papier', 'Source notes lost or selectively shortened.');
     [$x,$warnings] = mapped($museum+['MaterialTxt'=>$materials(['ets op papier','drager'])],$profile);
-    check($x->evaluate('count(/record/material_description)') === 0.0 && count($warnings) === 1 && $warnings[0]['field'] === 'material_description', 'Conflicting notes silently selected/combined.');
-    check($x->evaluate('count(/record/Material/material.notes)') === 2.0, 'Ambiguous source notes discarded.');
+    check($x->evaluate('count(/record/material_description)') === 0.0 && $warnings === [], 'Different notes selected/combined or obsolete ambiguity warning emitted.');
+    check($x->evaluate('count(/record/Material/material.notes)') === 2.0, 'Source notes discarded.');
     [$x,$warnings] = mapped($museum+['MaterialTxt'=>$materials(['ets op papier','drager']),'MaterialDescriptionTxt'=>'<material_description>Explicit current display</material_description>'],$profile);
     check($x->evaluate('string(/record/material_description)') === 'Explicit current display' && $warnings === [], 'Explicit description not given priority.');
+    [$x] = mapped($museum+['physical_description'=>'koperets','MaterialTxt'=>$materials(['Arches'."\n".'ets op papier']),'MaterialDescriptionTxt'=>'<material_description>Other field</material_description>'],$profile);
+    check($x->evaluate('string(/record/material_description)') === 'koperets', 'Physical description is not the primary Mu.ZEE display source.');
+    [$x] = mapped($museum+['physical_description'=>'','MaterialTxt'=>$materials(['Japans'])],$profile);
+    check($x->evaluate('count(/record/material_description)') === 0.0 && $x->evaluate('string(/record/Material/material.notes)') === 'Japans', 'Empty physical description was replaced by a material note.');
     [$x,$warnings] = mapped($museum+['MaterialTxt'=>$materials(['',' '])],$profile);
     check($x->evaluate('count(/record/material_description)') === 0.0 && $warnings === [], 'Empty notes invented a description.');
 }
 foreach (['Museum voor Schone Kunsten Gent'=>AxiellProfile::Msk,'Musea Brugge'=>AxiellProfile::Brugge] as $name=>$native) {
     foreach ([$native,AxiellProfile::Vkc] as $profile) {
-        [$x] = mapped(['MuseumTxt'=>'<institution.name>'.$name.'</institution.name>','MaterialTxt'=>$materials(['A note about one material'])],$profile);
+        [$x] = mapped(['MuseumTxt'=>'<institution.name>'.$name.'</institution.name>','physical_description'=>'olieverf op doek','MaterialTxt'=>$materials(['A note about one material'])],$profile);
         check($x->evaluate('count(/record/material_description)') === 0.0,'Mu.ZEE display convention applied to another museum.');
+        check($x->evaluate('string(/record/physical_description)') === 'olieverf op doek', 'MSK/Brugge physical description changed.');
     }
 }
-echo "PASS: scalar stable term keys, multiple terms, cross-profile identity and source-only material display with ambiguity guards\n";
+echo "PASS: scalar stable term keys, multiple terms, cross-profile identity and Mu.ZEE physical description without note fallback\n";
