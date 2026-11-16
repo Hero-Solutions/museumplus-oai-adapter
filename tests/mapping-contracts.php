@@ -32,7 +32,7 @@ check($x->evaluate('count(/record/Production/production.place)') === 1.0, 'Produ
 foreach (['<Production><creator>Maker A</creator></Production><Production><creator>Maker B</creator></Production>', ''] as $creators) {
     [$x, $warnings] = mapped($msk + $place + ['CreatorTxt' => $creators], AxiellProfile::Msk);
     check($x->evaluate('count(/record/Production[creator and production.place])') === 0.0, 'Place assigned to arbitrary creator.');
-    check($x->evaluate('string(/record/Production[not(creator)]/production.place/term)') === 'Augsburg, Duitsland' && count($warnings) === 1, 'Unassociated place lost or not reported.');
+    check($x->evaluate('string(/record/Production[not(creator)]/production.place)') === 'Augsburg, Duitsland' && count($warnings) === 1, 'Unassociated place unavailable to the production event or not reported.');
 }
 
 foreach (AxiellProfile::cases() as $profile) {

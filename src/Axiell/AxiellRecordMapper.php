@@ -12,6 +12,10 @@ use App\Normalizer\LabelNormalizer;
 
 final class AxiellRecordMapper
 {
+    private const AAT = 'http://vocab.getty.edu/page/aat/';
+    private const TGN = 'http://vocab.getty.edu/page/tgn/';
+    private const ICONCLASS = 'http://iconclass.org/';
+
     public function __construct(
         private readonly CreatorNormalizer $creatorNormalizer,
         private readonly DimensionNormalizer $dimensionNormalizer,
@@ -43,10 +47,7 @@ final class AxiellRecordMapper
         ]);
         if ($museum !== null && $sourceInstitution !== $this->museumGroups->name($museum)) $this->addText($elements, 'institution.original_name', $sourceInstitution);
         $this->addText($elements, 'administration_name', $this->first($record, 'Bewaarinstelling_lokaal::administration_name'));
-        foreach (array_unique($this->values($record, 'Naam_collectie::collection')) as $collection) {
-            if ($collection === ($sourceInstitution ?? ($museum === null ? null : $this->museumGroups->name($museum)))) continue;
-            $elements[] = $this->authorityValue($record, 'collection', $collection);
-        }
+        $this->addCollections($elements, $record, $sourceInstitution ?? ($museum === null ? null : $this->museumGroups->name($museum)));
         $this->addObjectCategory($elements, $record);
         $this->addObjectNames($elements, $record);
         $this->addTitles($elements, $record, $warnings, $profile);
@@ -62,12 +63,7 @@ final class AxiellRecordMapper
             'production.date.end.prec' => 'Productiedatum::Production/production.date.end.prec',
             'production.date.notes' => 'Productiedatum::Production/production.date.notes',
         ]);
-        $periods = [];
-        foreach (array_unique($this->values($record, 'Periode::Production_period/production.period') ?: $this->values($record, 'Periode::production.period')) as $period) {
-            $this->addNode($periods, 'production.period', [AxiellElement::text('term', $period)]);
-        }
-        array_push($elements, ...$periods);
-        foreach ($this->values($record, 'Periode::Production_period/production.period.notes') as $note) $this->addText($elements, 'production.period.notes', $note);
+        $this->addProductionPeriods($elements, $record);
         $this->addMaterials($elements, $record);
         $physicalDescription = $this->first($record, 'Physical_description_NL');
         $this->addText($elements, 'physical_description', $physicalDescription);
@@ -86,7 +82,7 @@ final class AxiellRecordMapper
         $this->addText($elements, 'edition', $this->first($record, 'Editie::edition'));
         $this->addText($elements, 'print_state', $this->first($record, 'PrintState::print_state'));
         $this->addText($elements, 'credit_line', $this->first($record, 'CreditLine::credit_line'));
-        $this->addMotif($elements, 'content.motif.general', $record, 'Term_motief_algemeen::content.motif.general');
+        $this->addGeneralMotifs($elements, $record);
         $this->addSpecificMotifs($elements, $record);
         $this->addDepictedContent($elements, $record);
         $this->addObjectRelations($elements, $record);
@@ -100,22 +96,7 @@ final class AxiellRecordMapper
             'condition.part' => 'Toestand::Condition/condition.part',
             'condition.check.name' => 'Toestand::Condition/condition.check.name',
         ]);
-        $this->addSimpleRows($elements, 'Inscription', $record, [
-            'inscription.content' => 'Opschrift::Inscription/inscription.content',
-            'inscription.type' => 'Opschrift::Inscription/inscription.type',
-            'inscription.method' => 'Opschrift::Inscription/inscription.method',
-            'inscription.position' => 'Opschrift::Inscription/inscription.position',
-            'inscription.notes' => 'Opschrift::Inscription/inscription.notes',
-            'inscription.description' => 'Opschrift::Inscription/inscription.description',
-            'inscription.interpretation' => 'Opschrift::Inscription/inscription.interpretation',
-            'inscription.language' => 'Opschrift::Inscription/inscription.language',
-            'inscription.creator' => 'Opschrift::Inscription/inscription.creator',
-            'inscription.creator.role' => 'Opschrift::Inscription/inscription.creator.role',
-            'inscription.translation' => 'Opschrift::Inscription/inscription.translation',
-            'inscription.date' => 'Opschrift::Inscription/inscription.date',
-            'inscription.script' => 'Opschrift::Inscription/inscription.script',
-            'inscription.transliteration' => 'Opschrift::Inscription/inscription.transliteration',
-        ]);
+        $this->addInscriptions($elements, $record);
         $this->addSimpleRows($elements, 'Rights', $record, [
             'rights.notes' => 'Rechten::Rights/rights.notes',
             'rights.type' => 'Rechten::Rights/rights.type',
@@ -133,7 +114,7 @@ final class AxiellRecordMapper
             'reproduction.original_file_name' => 'Reproductie::Reproduction/reproduction.original_file_name',
             'reproduction.webpublication' => 'Reproductie::Reproduction/reproduction.webpublication',
         ]);
-        $this->addExhibitions($elements, $record, $warnings);
+        $this->addExhibitions($elements, $record, $warnings, $profile);
         $this->addAdditionalGroups($elements, $record);
         $this->addContentDates($elements, $record);
         foreach ($this->values($record, 'WebPublicationTxt::webpublication') as $tag) $elements[] = $this->enumeration('webpublication', $tag);
@@ -159,7 +140,7 @@ final class AxiellRecordMapper
         return new AxiellRecord($record->objectNumber, $record->sourceIdentifier, $elements, $warnings);
     }
 
-    private function addExhibitions(array &$elements, RecordValues $record, array &$warnings): void
+    private function addExhibitions(array &$elements, RecordValues $record, array &$warnings, AxiellProfile $profile): void
     {
         foreach ($this->rows($record, [
             'exhibition' => 'Tentoonstelling::Exhibition/exhibition',
@@ -170,6 +151,8 @@ final class AxiellRecordMapper
             'exhibition.lref' => 'Tentoonstelling::Exhibition/exhibition.lref',
             'exhibition.date' => 'Tentoonstelling::Exhibition/exhibition.date',
             'exhibition.notes' => 'Tentoonstelling::Exhibition/exhibition.notes',
+            'exhibition.organiser' => 'Tentoonstelling::Exhibition/exhibition.organiser',
+            'exhibition.venue.place' => 'Tentoonstelling::Exhibition/exhibition.venue.place',
         ]) as $row) {
             if (count($row['exhibition.date']) === 1
                 && preg_match('/^(\d{4}(?:-\d{2}){0,2})\s+-\s+(\d{4}(?:-\d{2}){0,2})$/D', trim($row['exhibition.date'][0]), $range) === 1
@@ -187,7 +170,42 @@ final class AxiellRecordMapper
             }
             $children = [];
             foreach ($row as $name => $values) array_push($children, ...$this->texts($name, $values));
+            if ($profile === AxiellProfile::Msk) {
+                foreach (['venue' => 'exhibition.venue.place', 'organiser' => 'exhibition.organiser'] as $node => $field) {
+                    foreach ($row[$field] as $value) {
+                        $this->addNode($children, 'exhibition', [
+                            AxiellElement::node($node, [AxiellElement::text($node, $value)]),
+                        ]);
+                    }
+                }
+            }
             $this->addNode($elements, 'Exhibition', $children);
+        }
+    }
+
+    private function addCollections(array &$elements, RecordValues $record, ?string $institution): void
+    {
+        foreach ($this->rows($record, $this->termPaths('Naam_collectie::collection', 'collection')) as $row) {
+            if ($row['term'] !== [] && $row['term'] !== [$institution]) {
+                $elements[] = $this->termElement('collection', $row);
+            }
+        }
+    }
+
+    private function addProductionPeriods(array &$elements, RecordValues $record): void
+    {
+        $paths = $this->termPaths('Periode::Production_period', 'production.period');
+        $rows = $this->rows($record, $paths);
+        if ($rows === []) {
+            $rows = $this->rows($record, $this->termPaths('Periode::production.period', 'production.period'));
+        }
+        foreach ($rows as $row) {
+            if ($row['term'] !== []) {
+                $elements[] = $this->termElement('production.period', $row);
+            }
+        }
+        foreach ($this->values($record, 'Periode::Production_period/production.period.notes') as $note) {
+            $this->addText($elements, 'production.period.notes', $note);
         }
     }
 
@@ -221,16 +239,33 @@ final class AxiellRecordMapper
      */
     private function addObjectNames(array &$elements, RecordValues $record): void
     {
-        foreach ($this->rows($record, [
-            'term' => 'Term_objectnaam::Object_name/object_name',
+        foreach ($this->rows($record, $this->termPaths('Term_objectnaam::Object_name', 'object_name') + [
             'notes' => 'Term_objectnaam::Object_name/object_name.notes',
             'type' => 'Term_objectnaam::Object_name/object_name.type',
         ]) as $row) {
             $this->addNode($elements, 'Object_name', [
-                AxiellElement::node('object_name', $this->texts('term', $row['term'])),
+                $this->termElement('object_name', $row),
                 ...$this->texts('object_name.notes', $row['notes']),
                 ...$this->texts('object_name.type', $row['type']),
             ]);
+        }
+    }
+
+    private function addInscriptions(array &$elements, RecordValues $record): void
+    {
+        $group = 'Opschrift::Inscription';
+        $paths = [];
+        foreach (['content', 'method', 'position', 'notes', 'description', 'interpretation', 'language', 'creator',
+            'creator.role', 'translation', 'date', 'script', 'transliteration'] as $suffix) {
+            $field = 'inscription.'.$suffix;
+            $paths[$field] = $group.'/'.$field;
+        }
+        foreach ($this->rows($record, $paths + $this->termPaths($group, 'inscription.type')) as $row) {
+            $children = [$this->termElement('inscription.type', $row)];
+            foreach (array_keys($paths) as $field) {
+                array_push($children, ...$this->texts($field, $row[$field]));
+            }
+            $this->addNode($elements, 'Inscription', $children);
         }
     }
 
@@ -520,32 +555,63 @@ final class AxiellRecordMapper
      */
     private function addProduction(array &$elements, RecordValues $record, array &$warnings, AxiellProfile $profile): void
     {
-        $paths = [
-            'name' => 'Naam_vervaardiger::Production/creator',
-            'lref' => 'Naam_vervaardiger::Production/creator.lref',
-            'role' => 'Naam_vervaardiger::Production/creator.role',
-            'qualifier' => 'Naam_vervaardiger::Production/creator.qualifier',
-            'history' => 'Naam_vervaardiger::Production/creator.history',
-            'role_notes' => 'Naam_vervaardiger::Production/creator.role.notes',
-        ];
+        $group = 'Naam_vervaardiger::Production';
+        $paths = $this->termPaths($group, 'creator.role') + ['name' => $group.'/creator'];
+        foreach (['lref', 'fr', 'en', 'url', 'source', 'source.number', 'place', 'qualifier', 'history', 'role.notes'] as $field) {
+            $paths['creator.'.$field] = $group.'/creator.'.$field;
+        }
         foreach (['birth', 'death'] as $event) {
-            $paths[$event.'.place'] = 'Naam_vervaardiger::Production/'.$event.'.place';
-            $paths[$event.'.place.lref'] = 'Naam_vervaardiger::Production/'.$event.'.place.lref';
+            $place = $event.'.place';
+            foreach ($this->termPaths($group, $place) as $field => $path) {
+                $paths[$place.'.'.$field] = $path;
+            }
+            $paths[$place.'.lref'] = $group.'/'.$place.'.lref';
             foreach (['start', 'end', 'precision'] as $part) {
-                $paths[$event.'.date.'.$part] = 'Naam_vervaardiger::Production/'.$event.'.date.'.$part;
+                $paths[$event.'.date.'.$part] = $group.'/'.$event.'.date.'.$part;
             }
         }
         $rows = $this->rows($record, $paths);
-        $places = array_values(array_unique(array_map($this->labelNormalizer->productionPlace(...), $this->values($record, 'Naam_plaats_vervaardiging::production.place'))));
-        $attachPlace = $profile === AxiellProfile::Msk && count($rows) === 1 && count($rows[0]['name']) === 1 && count($places) === 1;
+        $places = [];
+        foreach ($this->rows($record, $this->termPaths('Naam_plaats_vervaardiging::production.place', 'production.place')) as $place) {
+            if ($place['term'] !== []) {
+                $label = $this->labelNormalizer->productionPlace($place['term'][0]);
+                if (count($place['source']) === 1 && self::vocabularySource($place['source'][0]) === self::TGN
+                    && preg_match('/^(.+), (\d{7})$/D', $label, $parts) === 1
+                    && ($place['term.number'] === [] || $place['term.number'] === [$parts[2]])) {
+                    // Some report labels include the TGN number after the place name.
+                    $label = $parts[1];
+                    $place['term'] = [$label];
+                    $place['term.number'] = [$parts[2]];
+                }
+                $places[$label][] = $this->termElement('production.place', $place);
+            }
+        }
+        $attached = [];
+        $isMsk = $profile === AxiellProfile::Msk || $this->isMsk($record);
         foreach ($rows as $row) {
-            $creator = $this->texts('name', $row['name']);
+            $creator = [
+                ...$this->texts('name', $row['name']),
+                ...$this->languageSlots('language_script', $row['creator.fr'], $row['creator.en']),
+                ...$this->creatorSources($row['creator.source'], $row['creator.source.number'], $isMsk),
+                ...$this->texts('url', $row['creator.url']),
+            ];
+            if (!$isMsk) {
+                foreach ($row['creator.url'] as $url) {
+                    $url = str_starts_with($url, 'www.') ? 'https://'.$url : $url;
+                    if (preg_match('~^https?://~i', $url) === 1 && filter_var($url, FILTER_VALIDATE_URL) !== false) {
+                        $this->addNode($creator, 'Source', [AxiellElement::text('source', $url)]);
+                    }
+                }
+            }
             $dates = [];
             foreach (['birth', 'death'] as $event) {
-                foreach ($row[$event.'.place'] as $place) {
-                    $this->addNode($creator, $event.'.place', [AxiellElement::text('term', $place)]);
+                $place = $event.'.place';
+                $placeValues = [];
+                foreach (['term', 'fr', 'en', 'source', 'term.number'] as $field) {
+                    $placeValues[$field] = $row[$place.'.'.$field];
                 }
-                array_push($creator, ...$this->texts($event.'.place.lref', $row[$event.'.place.lref']));
+                $creator[] = $this->termElement($place, $placeValues);
+                array_push($creator, ...$this->texts($place.'.lref', $row[$place.'.lref']));
                 foreach (['start', 'end'] as $part) {
                     $field = $event.'.date.'.$part;
                     $source = $row[$field] === [] ? null : implode(';', $row[$field]);
@@ -557,29 +623,79 @@ final class AxiellRecordMapper
                 }
                 $creator = [...$creator, ...$this->texts($event.'.date.precision', $row[$event.'.date.precision'])];
             }
+            $creatorPlaces = [];
+            if ($profile === AxiellProfile::Msk && count($row['name']) === 1) {
+                $labels = $row['creator.place'];
+                if ($labels === [] && count($rows) === 1 && count($places) === 1) {
+                    $labels = array_keys($places);
+                }
+                foreach ($labels as $label) {
+                    if (isset($places[$label])) {
+                        array_push($creatorPlaces, ...$places[$label]);
+                        $attached[$label] = true;
+                    } else {
+                        $creatorPlaces[] = AxiellElement::node('production.place', [AxiellElement::text('term', $label)]);
+                    }
+                }
+            }
             $this->addNode($elements, 'Production', [
                 AxiellElement::node('creator', $creator),
                 // Keep the source MuseumPlus link; it is not a legacy Adlib ID.
-                ...$this->texts('creator.lref', $row['lref']),
+                ...$this->texts('creator.lref', $row['creator.lref']),
                 AxiellElement::text('creator.date_of_birth', $dates['birth.date.start']),
                 AxiellElement::text('creator.date_of_death', $dates['death.date.start']),
-                AxiellElement::node('creator.role', $this->texts('term', $row['role'])),
-                ...$this->texts('creator.qualifier', $row['qualifier']),
-                ...$this->texts('creator.history', $row['history']),
-                ...$this->texts('creator.role.notes', $row['role_notes']),
-                AxiellElement::text('production.place', $attachPlace ? $places[0] : null),
+                $this->termElement('creator.role', $row),
+                ...$this->texts('creator.qualifier', $row['creator.qualifier']),
+                ...$this->texts('creator.history', $row['creator.history']),
+                ...$this->texts('creator.role.notes', $row['creator.role.notes']),
+                ...$this->texts('creator.place', $row['creator.place']),
+                ...$creatorPlaces,
             ]);
         }
-        // The source has no link between these places and individual creators.
-        if (!$attachPlace) foreach ($places as $place) {
-            $this->addNode($elements, 'Production', [AxiellElement::text('production.place', $place)]);
+        $unattached = array_diff_key($places, $attached);
+        foreach ($unattached as $matches) {
+            foreach ($matches as $place) {
+                $this->addNode($elements, 'Production', AxiellProfile::flattenTerm($place));
+            }
         }
-        if ($profile === AxiellProfile::Msk && $places !== [] && !$attachPlace) {
-            $warnings[] = ['field' => 'Naam_plaats_vervaardiging', 'message' => 'Object-level production place retained separately: no unambiguous single creator/place association for the MSK fix.'];
+        if ($profile === AxiellProfile::Msk && $unattached !== []) {
+            $warnings[] = ['field' => 'Naam_plaats_vervaardiging', 'message' => 'Object-level production place retained without an explicit or unambiguous creator association.'];
         }
         $this->addSimpleRows($elements, 'Production', $record, [
             'production.notes' => 'ProductionNotesTxt::Production/production.notes',
         ]);
+    }
+
+    private function creatorSources(array $sources, array $numbers, bool $msk): array
+    {
+        if (count($sources) !== count($numbers)) {
+            return [...$this->texts('source', $sources), ...$this->texts('source.number', $numbers)];
+        }
+        $elements = [];
+        foreach ($sources as $index => $source) {
+            $number = $numbers[$index];
+            $base = str_ends_with($source, '/'.$number) ? substr($source, 0, -strlen($number)) : $source;
+            $kind = match (true) {
+                preg_match('~^(?:wikidata|(?:https?://)?(?:www\.)?wikidata\.org/wiki/?)$~iD', $base) === 1 => 'Wikidata',
+                preg_match('~^(?:viaf|https?://(?:www\.)?viaf\.org/(?:en/)?viaf/?)$~iD', $base) === 1 => 'VIAF',
+                preg_match('~^(?:rkd(?:artists&?)?|https?://(?:www\.)?rkd\.nl/(?:nl/)?(?:explore/)?artists/?)$~iD', $base) === 1 => 'RKDartists&',
+                default => null,
+            };
+            $base = match ($kind) {
+                'Wikidata' => 'https://www.wikidata.org/wiki/',
+                'VIAF' => 'https://viaf.org/viaf/',
+                'RKDartists&' => 'https://rkd.nl/explore/artists/',
+                default => $source,
+            };
+            // The Brugge/Mu.ZEE fixes also copy unrecognised Source values as URLs.
+            // Preserve other authority names and numbers without treating them as links.
+            $this->addNode($elements, $kind === null ? 'source.reference' : 'Source', [
+                AxiellElement::text('source', $msk ? ($kind ?? $source) : $base),
+                AxiellElement::text('source.number', $number),
+            ]);
+        }
+
+        return $elements;
     }
 
     private function addDepictedContent(array &$elements, RecordValues $record): void
@@ -588,7 +704,7 @@ final class AxiellRecordMapper
             $root = 'Content_'.$kind;
             $fields = $kind === 'person'
                 ? ['content.person.name', 'content.person.name.lref', 'content.person.name.type', 'content.person.note', 'content.person.position']
-                : ['content.subject', 'content.subject.lref', 'content.subject.type', 'content.subject.name', 'content.subject.note', 'content.subject.position'];
+                : ['content.subject', 'content.subject.lref', 'content.subject.type', 'content.subject.name', 'content.subject.note', 'content.subject.position', 'content.subject.source', 'content.subject.term.number'];
             $paths = [];
             foreach ($fields as $field) $paths[$field] = $source.'::'.$root.'/'.$field;
             $this->addSimpleRows($elements, $root, $record, $paths);
@@ -600,7 +716,7 @@ final class AxiellRecordMapper
         foreach ([
             'Parts' => ['parts_reference', 'parts_reference.lref', 'parts.title', 'parts.notes'],
             'Part_of' => ['part_of_reference', 'part_of_reference.lref', 'part_of.title', 'part_of.notes'],
-            'Related_object' => ['related_object.reference', 'related_object.reference.lref', 'related_object.title', 'related_object.association', 'related_object.notes'],
+            'Related_object' => ['related_object.reference', 'related_object.reference.lref', 'related_object.title', 'related_object.association', 'related_object.association.fr', 'related_object.association.en', 'related_object.notes'],
         ] as $root => $fields) {
             $paths = [];
             foreach ($fields as $field) $paths[$field] = 'RelationsTxt::'.$root.'/'.$field;
@@ -682,7 +798,7 @@ final class AxiellRecordMapper
 
     private function addDocumentation(array &$elements, RecordValues $record): void
     {
-        $fields = ['documentation.title', 'documentation.title.lref', 'author.name', 'publisher', 'place_of_publication', 'year_of_publication', 'documentation.page_reference', 'documentation.notes'];
+        $fields = ['documentation.title', 'documentation.title.lref', 'documentation.title.lead_word', 'author.name', 'publisher', 'place_of_publication', 'year_of_publication', 'documentation.page_reference', 'documentation.notes'];
         $paths = [];
         foreach ($fields as $field) $paths[$field] = 'DocumentationTxt::Documentation/'.$field;
         foreach ($this->rows($record, $paths) as $row) {
@@ -690,13 +806,16 @@ final class AxiellRecordMapper
                 AxiellElement::node('documentation.title', [
                     ...$this->texts('title', $row['documentation.title']),
                     ...array_map(static fn (string $name) => AxiellElement::node('Author', [AxiellElement::text('author.name', $name)]), $row['author.name']),
+                    // The fix formats scalar lists. The report supplies these as
+                    // independent fields of the publication, without publisher/place pairs.
                     AxiellElement::node('Publisher', [
-                        ...$this->texts('publisher', $row['publisher']),
-                        ...$this->texts('place_of_publication', $row['place_of_publication']),
-                        ...$this->texts('year_of_publication', $row['year_of_publication']),
+                        AxiellElement::text('publisher', implode('; ', $row['publisher'])),
+                        AxiellElement::text('place_of_publication', implode('; ', $row['place_of_publication'])),
+                        AxiellElement::text('year_of_publication', implode('; ', $row['year_of_publication'])),
                     ]),
                 ]),
                 ...$this->texts('documentation.title.lref', $row['documentation.title.lref']),
+                ...$this->texts('documentation.title.lead_word', $row['documentation.title.lead_word']),
                 ...$this->texts('documentation.page_reference', $row['documentation.page_reference']),
                 ...$this->texts('documentation.notes', $row['documentation.notes']),
             ]);
@@ -708,34 +827,15 @@ final class AxiellRecordMapper
      */
     private function addMaterials(array &$elements, RecordValues $record): void
     {
-        $rows = $this->rows($record, [
-            'term' => 'Term_materiaal::Material/material',
-            'fr' => 'Term_materiaal::Material/material.fr',
-            'en' => 'Term_materiaal::Material/material.en',
-            'source' => 'Term_materiaal::Material/material.source',
-            'term.number' => 'Term_materiaal::Material/material.term.number',
+        $rows = $this->rows($record, $this->termPaths('Term_materiaal::Material', 'material') + [
             'term.code' => 'Term_materiaal::Material/material.term.code',
             'part' => 'Term_materiaal::Material/material.part',
             'notes' => 'Term_materiaal::Material/material.notes',
         ]);
 
         foreach ($rows as $row) {
-            $translations = [];
-            if ($row['fr'] !== [] || $row['en'] !== []) {
-                // The existing MSK fixes read notes by position: French, then English.
-                // Keep both slots so a missing translation cannot shift the language.
-                foreach (['fr', 'en'] as $language) {
-                    $translations[] = AxiellElement::text('notes', $row[$language][0] ?? null)
-                        ?? new AxiellElement('notes', '');
-                }
-            }
             $this->addNode($elements, 'Material', [
-                AxiellElement::node('material', [
-                    ...$this->texts('term', $row['term']), ...$translations,
-                    ...$this->texts('source', $row['source']),
-                    ...$this->texts('term.number', $row['term.number']),
-                    ...$this->texts('term.code', $row['term.code']),
-                ]),
+                $this->termElement('material', $row, $this->texts('term.code', $row['term.code'])),
                 ...$this->texts('material.part', $row['part']),
                 ...$this->texts('material.notes', $row['notes']),
             ]);
@@ -747,17 +847,12 @@ final class AxiellRecordMapper
      */
     private function addTechniques(array &$elements, RecordValues $record): void
     {
-        foreach ($this->rows($record, [
-            'technique' => 'Term_techniek::Technique/technique',
+        foreach ($this->rows($record, $this->termPaths('Term_techniek::Technique', 'technique') + [
             'technique.part' => 'Term_techniek::Technique/technique.part',
             'technique.notes' => 'Term_techniek::Technique/technique.notes',
         ]) as $row) {
-            $children = [];
-            foreach ($row['technique'] as $term) {
-                $children[] = $this->authorityValue($record, 'technique', $term);
-            }
             $this->addNode($elements, 'Technique', [
-                ...$children,
+                $this->termElement('technique', $row),
                 ...$this->texts('technique.part', $row['technique.part']),
                 ...$this->texts('technique.notes', $row['technique.notes']),
             ]);
@@ -766,15 +861,20 @@ final class AxiellRecordMapper
 
     private function addAcquisitions(array &$elements, RecordValues $record): void
     {
-        foreach ($this->rows($record, [
+        $paths = [
             'acquisition.source' => 'Verwerving::Acquisition_source/acquisition.source',
-            'acquisition.method' => 'Verwerving::Acquisition_source/acquisition.method',
             'acquisition.date' => 'Verwerving::Acquisition_source/acquisition.date',
             'acquisition.place' => 'Verwerving::Acquisition_source/acquisition.place',
-        ]) as $row) {
-            $children = [];
-            foreach ($row as $field => $values) {
-                foreach ($values as $value) {
+        ];
+        foreach ($this->rows($record, $paths + $this->termPaths('Verwerving::Acquisition_source', 'acquisition.method')) as $row) {
+            $method = $row['term'] === [] ? null : $this->termElement('acquisition.method', $row);
+            $children = [$method];
+            // Existing DataHub mappings consume acquisition methods at record level.
+            if ($method !== null) {
+                $elements[] = $method;
+            }
+            foreach (array_keys($paths) as $field) {
+                foreach ($row[$field] as $value) {
                     if ($field === 'acquisition.source') {
                         $children[] = $this->authorityValue($record, $field, $value, 'name');
                     } else {
@@ -805,31 +905,150 @@ final class AxiellRecordMapper
 
     private function addSpecificMotifs(array &$elements, RecordValues $record): void
     {
+        $group = 'Term_motief_specifiek::Content_motif_specific';
         $rows = $this->rows($record, [
-            'term' => 'Term_motief_specifiek::Content_motif_specific/content.motif.specific',
-            'broader_term' => 'Term_motief_specifiek::Content_motif_specific/broader_term',
-        ]);
-        foreach ($rows as $row) {
-            $this->addNode($elements, 'content.motif.specific', [
-                ...$this->texts('term', $row['term']),
-                ...$this->texts('broader_term', $row['broader_term']),
-            ]);
-        }
+            'source' => $group.'/source',
+            'term.number' => $group.'/term.number',
+            'broader_term' => $group.'/broader_term',
+        ] + $this->termPaths($group, 'content.motif.specific'));
         if ($rows === []) {
-            $this->addMotif($elements, 'content.motif.specific', $record, 'Term_motief_specifiek::content.motif.specific');
+            $rows = $this->rows($record, $this->termPaths('Term_motief_specifiek::content.motif.specific', 'content.motif.specific'));
+        }
+        foreach ($rows as $row) {
+            if ($row['term'] !== []) {
+                $elements[] = $this->termElement('content.motif.specific', $row, $this->texts('broader_term', $row['broader_term'] ?? []));
+            }
         }
     }
 
-    /**
-     * @param list<AxiellElement> $elements
-     */
-    private function addMotif(array &$elements, string $elementName, RecordValues $record, string $path): void
+    private function addGeneralMotifs(array &$elements, RecordValues $record): void
     {
-        foreach ($this->values($record, $path) as $value) {
-            $this->addNode($elements, $elementName, [
-                AxiellElement::text('term', $value),
-            ]);
+        $field = 'content.motif.general';
+        foreach ($this->rows($record, $this->termPaths('Term_motief_algemeen::'.$field, $field)) as $row) {
+            if ($row['term'] !== []) {
+                $codes = array_any($row['source'], static fn (string $source): bool => self::vocabularySource($source) === self::ICONCLASS)
+                    ? $this->texts('term.code', $row['term.number'])
+                    : [];
+                $elements[] = $this->termElement($field, $row, $codes);
+            }
         }
+    }
+
+    /** @return array<string, string> */
+    private function termPaths(string $group, string $field): array
+    {
+        $base = $group.'/'.$field;
+
+        return ['term' => $base, 'fr' => $base.'.fr', 'en' => $base.'.en', 'source' => $base.'.source', 'term.number' => $base.'.term.number'];
+    }
+
+    private function termElement(string $name, array $row, array $extra = []): ?AxiellElement
+    {
+        return AxiellElement::node($name, [
+            ...$this->texts('term', $row['term']),
+            ...$this->languageSlots('notes', $row['fr'], $row['en']),
+            ...$this->vocabularyReferences($row['source'], $row['term.number'], $row['term.code'] ?? []),
+            ...$extra,
+        ]);
+    }
+
+    private function languageSlots(string $name, array $french, array $english): array
+    {
+        if ($french === [] && $english === []) {
+            return [];
+        }
+
+        // Existing fixes read French at index 0 and English at index 1.
+        return [
+            AxiellElement::text($name, $french[0] ?? null) ?? new AxiellElement($name, ''),
+            AxiellElement::text($name, $english[0] ?? null) ?? new AxiellElement($name, ''),
+        ];
+    }
+
+    private static function vocabularySource(string $source): string
+    {
+        return match (true) {
+            preg_match('~^(?:aat(?:\s*-?\s*(?:ned|getty))?|https?://vocab\.getty\.edu/(?:page/)?aat/?)$~iD', $source) === 1 => self::AAT,
+            preg_match('~^(?:tgn|https?://vocab\.getty\.edu/(?:page/)?tgn/?)$~iD', $source) === 1 => self::TGN,
+            preg_match('~^(?:iconclass|https?://iconclass\.org/?)$~iD', $source) === 1 => self::ICONCLASS,
+            preg_match('~^https?://(?:www\.)?wikidata\.org/wiki/?$~iD', $source) === 1 => 'https://www.wikidata.org/wiki/',
+            default => $source,
+        };
+    }
+
+    private function vocabularyReferences(array $sources, array $numbers, array $codes): array
+    {
+        if (count($sources) === 1 && count($numbers) === 1 && str_contains($sources[0], ';')) {
+            $sourceParts = array_map(trim(...), explode(';', $sources[0]));
+            $numberParts = array_map(trim(...), explode(';', $numbers[0]));
+            if (count($sourceParts) === count($numberParts) && !in_array('', [...$sourceParts, ...$numberParts], true)) {
+                $sources = $sourceParts;
+                $numbers = $numberParts;
+            }
+        }
+        if (count($sources) === 1 && preg_match('~^(https?://vocab\.getty\.edu/(?:page/)?(?:aat|tgn)/)(\d+)$~iD', $sources[0], $uri) === 1
+            && ($numbers === [] || $numbers === [$uri[2]])) {
+            $sources = [$uri[1]];
+            $numbers = [$uri[2]];
+        }
+        $sources = array_map(self::vocabularySource(...), $sources);
+        if ($sources === []) {
+            return $this->texts('term.number', $numbers);
+        }
+        $hasTermNumbers = $numbers !== [];
+        $ids = $hasTermNumbers ? $numbers : $codes;
+        if (in_array(self::ICONCLASS, $sources, true)) {
+            $ids = $this->joinIconclassFragments($ids);
+        }
+
+        $references = [];
+        $usedSources = [];
+        foreach ($ids as $index => $id) {
+            if (count($sources) === 1) {
+                $source = $sources[0];
+            } elseif (in_array(self::ICONCLASS, $sources, true) && in_array(self::AAT, $sources, true)) {
+                // The report can order AAT and Iconclass independently of their IDs.
+                $source = preg_match('/^300\d{6}$/D', $id) === 1 ? self::AAT : self::ICONCLASS;
+            } elseif (count($sources) === count($ids)) {
+                $source = $sources[$index];
+            } elseif (preg_match('/^300\d{6}$/D', $id) === 1 && in_array(self::AAT, $sources, true)) {
+                $source = self::AAT;
+            } else {
+                $source = null;
+            }
+            if ($source === null) {
+                $this->addText($references, $hasTermNumbers ? 'term.number.unlinked' : 'term.code.unlinked', $id);
+                continue;
+            }
+            $this->addText($references, 'source', $source);
+            if ($hasTermNumbers) {
+                $this->addText($references, 'term.number', $id);
+            }
+            $usedSources[] = $source;
+        }
+        // Passing a base URL without its identifier would create a false concept ID.
+        array_push($references, ...$this->texts('source.unlinked', array_diff($sources, $usedSources)));
+
+        return $references;
+    }
+
+    /** A comma in a named Iconclass subject is sometimes split across XML elements. */
+    private function joinIconclassFragments(array $ids): array
+    {
+        $joined = [];
+        $pending = '';
+        foreach ($ids as $id) {
+            $pending = $pending === '' ? $id : $pending.', '.$id;
+            if (substr_count($pending, '(') <= substr_count($pending, ')')) {
+                $joined[] = $pending;
+                $pending = '';
+            }
+        }
+        if ($pending !== '') {
+            $joined[] = $pending;
+        }
+
+        return $joined;
     }
 
     /**

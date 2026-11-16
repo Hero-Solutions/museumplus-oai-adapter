@@ -30,7 +30,7 @@ final class XmlValueExtractor
     /**
      * @return array{values: array<string, list<string>>, groups: array<string, list<array<string, list<string>>>>, error: string|null, repair: string|null}
      */
-    public function extractFromFragment(string $fragment): array
+    public function extractFromFragment(string $fragment, ?string $flatTerm = null): array
     {
         $fragment = trim($fragment);
 
@@ -57,13 +57,30 @@ final class XmlValueExtractor
         }
 
         $groups = [];
+        $flatRowIndex = null;
         foreach ($document->documentElement->childNodes as $child) {
-            if ($child instanceof DOMElement) {
-                // Keep each repetition intact, including missing optional children.
-                $row = [];
-                $this->extractElement($child, $child->localName, $row);
-                $groups[$child->localName][] = $row;
+            if (!$child instanceof DOMElement) {
+                continue;
             }
+
+            $name = $child->localName;
+            if ($flatTerm !== null && $name === $flatTerm) {
+                // The export puts a term's optional fields immediately after its label.
+                $flatRowIndex = count($groups[$flatTerm] ?? []);
+                $groups[$flatTerm][$flatRowIndex] = [];
+                $this->extractElement($child, $flatTerm.'/'.$name, $groups[$flatTerm][$flatRowIndex]);
+                continue;
+            }
+            if ($flatRowIndex !== null && str_starts_with($name, $flatTerm.'.')) {
+                $this->extractElement($child, $flatTerm.'/'.$name, $groups[$flatTerm][$flatRowIndex]);
+                continue;
+            }
+
+            // Keep each repetition intact, including missing optional children.
+            $flatRowIndex = null;
+            $row = [];
+            $this->extractElement($child, $name, $row);
+            $groups[$name][] = $row;
         }
 
         return [

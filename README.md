@@ -90,7 +90,10 @@ Inhoud komt uitsluitend uit MuseumPlus. De Axiell-referentie bewaart alleen de
 koppeling met bestaande OAI-identifiers. Oude vertalingen, thesaurusnummers,
 materiaalomschrijvingen en veldinterpretaties worden niet meer aangevuld.
 De afzonderlijk ingestelde FR/EN-namen van MSK Gent blijven behouden.
-Materiaalvertalingen en bronverwijzingen die MuseumPlus zelf levert, blijven doorstromen.
+De adapter koppelt de geleverde FR/EN-termen en bronverwijzingen aan de juiste
+termen en vervaardigers. Bibliografische gegevens blijven bij hun publicatie.
+Inscripties kunnen alleen een type bevatten. Tentoonstellingsorganisatoren en
+-plaatsen blijven bij hun tentoonstelling.
 
 De ongewijzigde Brugge- en Mu.ZEE-fixes gebruiken bij sommige termen een parallelle
 lijst met ID's. Daarvoor maakt de adapter stabiele sleutels met prefix
@@ -120,9 +123,10 @@ worden samengevoegd tot één displayveld, zonder de volgende tekst te verliezen
 Een enkelvoudige duur wordt gesplitst in getal en eenheid; de volledige tekst en
 eventuele benadering blijven bewaard. Expliciete tentoonstellingsdatumbereiken
 leveren begin en einde op, zonder bestaande datums te overschrijven.
-Vervaardigingsplaatsen blijven volledig, inclusief land. Alleen bij één vervaardiger
-en één plaats wordt die plaats voor de MSK-museumfix bij de vervaardiger gezet.
-Andere gevallen blijven apart in XML en krijgen een melding.
+Vervaardigingsplaatsen blijven volledig, inclusief land. De MSK-museumfix
+krijgt de plaats bij de vervaardiger via `creator.place` of via de unieke
+combinatie van één vervaardiger en één objectplaats. Objectplaatsen zonder
+eenduidige koppeling gaan naar het productie-evenement.
 
 Nieuwe bronvelden vereisen een nieuwe import. Heropbouwen verwerkt alleen wat
 al in de opgeslagen raw XML aanwezig is.

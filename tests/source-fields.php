@@ -86,3 +86,135 @@ foreach (AxiellProfile::cases() as $profile) {
     check($x->evaluate('count(/record/Dimension[2]/dimension.type)') === 0.0 && $x->evaluate('string(/record/Dimension[3]/dimension.type)') === 'breedte', 'Unknown measurement type guessed or explicit source type overwritten.');
 }
 echo "PASS: explicit title languages only; grouped life places and relations; full measurements; multiple authors/styles in all four profiles\n";
+
+$revised = [
+    'CollectionTxt' => <<<'XML'
+        <collection>Museum voor Schone Kunsten Gent</collection>
+        <collection>Prentenkabinet</collection>
+        <collection.fr>Cabinet des estampes</collection.fr>
+        <collection.en>Print room</collection.en>
+        <collection>Archief</collection>
+        XML,
+    'ObjectNameTxt' => <<<'XML'
+        <Object_name><object_name>tekening</object_name><object_name.en>drawing</object_name.en>
+          <object_name.source>http://vocab.getty.edu/aat/300033973</object_name.source>
+          <object_name.term.number>300033973</object_name.term.number>
+          <object_name.notes>Materiële vorm</object_name.notes></Object_name>
+        XML,
+    'CreatorTxt' => <<<'XML'
+        <Production><creator>Maker zonder plaats</creator></Production>
+        <Production>
+          <creator>Maker met plaats</creator><creator.fr>Nom français</creator.fr><creator.en>English name</creator.en>
+          <creator.source>https://rkd.nl/artists/</creator.source><creator.source.number>1234</creator.source.number>
+          <creator.source>https://www.wikidata.org/wiki</creator.source><creator.source.number>Q567</creator.source.number>
+          <creator.source>http://viaf.org/viaf/9876</creator.source><creator.source.number>9876</creator.source.number>
+          <creator.url>https://example.invalid/artist</creator.url><creator.place>Gent</creator.place>
+          <creator.role>schilder</creator.role><creator.role.fr>peintre</creator.role.fr><creator.role.en>painter</creator.role.en>
+          <creator.role.source>http://vocab.getty.edu/aat/</creator.role.source><creator.role.term.number>300025136</creator.role.term.number>
+          <birth.place>Brugge</birth.place><birth.place.fr>Bruges</birth.place.fr><birth.place.en>Bruges</birth.place.en>
+          <birth.place.source>http://vocab.getty.edu/tgn/;https://www.wikidata.org/wiki</birth.place.source>
+          <birth.place.term.number>7008085;Q12994</birth.place.term.number>
+          <death.place>Luik</death.place><death.place.fr>Liège</death.place.fr>
+          <death.place.source>TGN</death.place.source><death.place.term.number>7008024</death.place.term.number>
+        </Production>
+        XML,
+    'ProductionPlaceTxt' => <<<'XML'
+        <production.place>Parijs</production.place>
+        <production.place>Gent, 7007887</production.place><production.place.fr>Gand</production.place.fr><production.place.en>Ghent</production.place.en>
+        <production.place.source>http://vocab.getty.edu/tgn/</production.place.source>
+        XML,
+    'PeriodTxt' => <<<'XML'
+        <Production_period><production.period>19de eeuw</production.period><production.period.en>19th century</production.period.en>
+          <production.period.notes>Bronnotitie</production.period.notes></Production_period>
+        XML,
+    'TechniqueTxt' => <<<'XML'
+        <Technique><technique>ets</technique><technique.fr>eau-forte</technique.fr><technique.en>etching</technique.en>
+          <technique.source>AAT-Ned</technique.source><technique.term.number>300041365</technique.term.number></Technique>
+        XML,
+    'InscriptionTxt' => <<<'XML'
+        <Inscription><inscription.type>watermerk</inscription.type><inscription.type.fr>filigrane</inscription.type.fr>
+          <inscription.type.source>https://iconclass.org/</inscription.type.source>
+          <inscription.type.source>http://vocab.getty.edu/aat/</inscription.type.source>
+          <inscription.type.term.number>300028797</inscription.type.term.number></Inscription>
+        <Inscription><inscription.content>Brongeschreven tekst</inscription.content></Inscription>
+        XML,
+    'MotifGeneralTxt' => <<<'XML'
+        <content.motif.general>dieren</content.motif.general>
+        <content.motif.general.source>Iconclass</content.motif.general.source><content.motif.general.term.number>25F</content.motif.general.term.number>
+        <content.motif.general>figuren</content.motif.general><content.motif.general.en>figures</content.motif.general.en>
+        XML,
+    'MotifSpecificTxt' => <<<'XML'
+        <Content_motif_specific><content.motif.specific>stoel</content.motif.specific><broader_term>meubilair</broader_term>
+          <content.motif.specific.fr>chaise</content.motif.specific.fr>
+          <source>https://iconclass.org/</source><source>http://vocab.getty.edu/aat/</source>
+          <term.number>300037772</term.number><term.number>41A721</term.number></Content_motif_specific>
+        <Content_motif_specific><content.motif.specific>persoon</content.motif.specific>
+          <source>Iconclass</source><term.number>61B2(NAAM</term.number><term.number>Voornaam)</term.number></Content_motif_specific>
+        <Content_motif_specific><content.motif.specific>zonder code</content.motif.specific><source>http://iconclass.org/</source></Content_motif_specific>
+        XML,
+    'ExhibitionTxt' => <<<'XML'
+        <Exhibition><exhibition>Tentoonstelling</exhibition>
+          <exhibition.organiser>Museum A</exhibition.organiser><exhibition.organiser>Museum B</exhibition.organiser>
+          <exhibition.venue.place>Gent</exhibition.venue.place><exhibition.venue.place>Brugge</exhibition.venue.place></Exhibition>
+        XML,
+    'DocumentationTxt' => <<<'XML'
+        <Documentation><documentation.title>De publicatie</documentation.title><author.name>Auteur A</author.name>
+          <author.name>Auteur B</author.name><publisher>Uitgever A</publisher><publisher>Uitgever B</publisher>
+          <place_of_publication>Gent</place_of_publication><place_of_publication>Brugge</place_of_publication></Documentation>
+        XML,
+    'AcquisitionTxt' => '<Acquisition_source><acquisition.method>koop</acquisition.method><acquisition.method.en>purchase</acquisition.method.en></Acquisition_source>',
+];
+
+$msk = ['MuseumTxt' => '<institution.name>Museum voor Schone Kunsten Gent</institution.name>'];
+[$x] = mapped($msk + $revised, AxiellProfile::Msk);
+$xpathValues = [
+    '/record/collection[term="Prentenkabinet"]/notes[2]' => 'Print room',
+    '/record/Object_name/object_name/notes[2]' => 'drawing',
+    '/record/Object_name/object_name/source' => 'http://vocab.getty.edu/page/aat/',
+    '/record/Object_name/object_name.notes' => 'Materiële vorm',
+    '/record/Production[creator/name="Maker met plaats"]/creator/language_script[2]' => 'English name',
+    '/record/Production/creator/Source[source="RKDartists&"]/source.number' => '1234',
+    '/record/Production/creator/Source[source="Wikidata"]/source.number' => 'Q567',
+    '/record/Production/creator/Source[source="VIAF"]/source.number' => '9876',
+    '/record/Production/creator/url' => 'https://example.invalid/artist',
+    '/record/Production/creator/birth.place/source[1]' => 'http://vocab.getty.edu/page/tgn/',
+    '/record/Production/creator/birth.place/term.number[2]' => 'Q12994',
+    '/record/Production/creator/death.place/notes[1]' => 'Liège',
+    '/record/Production[creator/name="Maker met plaats"]/creator.place' => 'Gent',
+    '/record/Production[creator/name="Maker met plaats"]/production.place/notes[1]' => 'Gand',
+    '/record/Production[creator/name="Maker met plaats"]/production.place/term.number' => '7007887',
+    '/record/Production[not(creator)]/production.place' => 'Parijs',
+    '/record/Production/creator.role/notes[2]' => 'painter',
+    '/record/production.period/notes[2]' => '19th century',
+    '/record/production.period.notes' => 'Bronnotitie',
+    '/record/Technique/technique/notes[1]' => 'eau-forte',
+    '/record/Inscription[not(inscription.content)]/inscription.type/notes[1]' => 'filigrane',
+    '/record/Inscription[not(inscription.content)]/inscription.type/source[1]' => 'http://vocab.getty.edu/page/aat/',
+    '/record/content.motif.general[term="dieren"]/term.code' => '25F',
+    '/record/content.motif.general[term="figuren"]/notes[2]' => 'figures',
+    '/record/content.motif.specific[term="stoel"]/source[2]' => 'http://iconclass.org/',
+    '/record/content.motif.specific[term="stoel"]/term.number[2]' => '41A721',
+    '/record/content.motif.specific[term="persoon"]/term.number' => '61B2(NAAM, Voornaam)',
+    '/record/Exhibition/exhibition/organiser/organiser[.="Museum B"]' => 'Museum B',
+    '/record/Exhibition/exhibition/venue/venue[.="Brugge"]' => 'Brugge',
+    '/record/Documentation/documentation.title/title' => 'De publicatie',
+    '/record/Documentation/documentation.title/Publisher/publisher' => 'Uitgever A; Uitgever B',
+    '/record/Documentation/documentation.title/Publisher/place_of_publication' => 'Gent; Brugge',
+    '/record/acquisition.method/notes[2]' => 'purchase',
+];
+foreach ($xpathValues as $path => $expected) {
+    check($x->evaluate('string('.$path.')') === $expected, 'Incorrect field in the revised report mapping: '.$path);
+}
+check($x->evaluate('count(/record/collection[term="Archief"]/notes | /record/Production[creator/name="Maker zonder plaats"]/production.place)') === 0.0, 'Optional fields moved between repeated source rows.');
+check($x->evaluate('count(/record/content.motif.specific[term="zonder code"]/source)') === 0.0, 'An Iconclass base URI became a concept identifier.');
+
+foreach ([AxiellProfile::Brugge, AxiellProfile::Muzee, AxiellProfile::Vkc] as $profile) {
+    [$x] = mapped(['MuseumTxt' => '<institution.name>Mu.ZEE, Kunstmuseum aan zee</institution.name>'] + $revised, $profile);
+    check($x->evaluate('string(/record/Production/creator/Source[source="https://viaf.org/viaf/"]/source.number)') === '9876', 'Wrong creator authority format for '.$profile->value);
+    check($x->evaluate('string(/record/Production/creator/Source[source="https://example.invalid/artist"]/source)') === 'https://example.invalid/artist', 'Creator website missing from the legacy Source format.');
+    check($x->evaluate('string(/record/Production[production.place="Gent"]/production.place.en)') === 'Ghent', 'Flat place or translation missing.');
+    check($x->evaluate('string(/record/Inscription/inscription.type)') === 'watermerk' && $x->evaluate('string(/record/Inscription/inscription.type.fr)') === 'filigrane', 'Type-only inscription lost or mangled.');
+    check($x->evaluate('string(/record/Exhibition/exhibition.venue.place[2])') === 'Brugge', 'Exhibition places lost in '.$profile->value);
+    check($x->evaluate('string(/record/Acquisition_source/acquisition.method.en)') === 'purchase', 'Acquisition translation moved out of its source row.');
+}
+echo "PASS: revised MuseumPlus vocabulary, linked creators and places, Iconclass, bibliography, type-only inscriptions and exhibitions\n";

@@ -57,6 +57,14 @@ final class MuseumPlusExportParser
         'TitleNotesTxt' => 'Titel_opmerkingen',
     ];
 
+    private const FLAT_TERM_FIELDS = [
+        'Naam_collectie' => 'collection',
+        'Naam_plaats_vervaardiging' => 'production.place',
+        'Periode' => 'production.period',
+        'Term_motief_algemeen' => 'content.motif.general',
+        'Term_motief_specifiek' => 'content.motif.specific',
+    ];
+
     public function __construct(
         private readonly XmlValueExtractor $valueExtractor,
     ) {
@@ -113,7 +121,7 @@ final class MuseumPlusExportParser
                     continue;
                 }
 
-                $parsed = $this->valueExtractor->extractFromFragment($fragment);
+                $parsed = $this->valueExtractor->extractFromFragment($fragment, self::FLAT_TERM_FIELDS[$sourceField] ?? null);
 
                 if ($parsed['error'] !== null) {
                     $invalidFragments[] = ['field' => $exportField, 'error' => $parsed['error']];
