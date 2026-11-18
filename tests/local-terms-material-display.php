@@ -14,7 +14,7 @@ function associations(DOMXPath $x, string $field): array
     $result = [];
     foreach ($terms as $i => $term) {
         $key = $keys[$i];
-        check($key->childElementCount === 0 && $key->textContent !== '' && str_starts_with($key->textContent, 'adapter-local:'), 'Empty/nested ID would be stringified as HASH(...).');
+        check($key->childElementCount === 0 && preg_match('/^[0-9a-f]{16}$/D', $key->textContent) === 1, 'Missing, nested or non-opaque local ID.');
         $label = $x->query('term', $term)->length ? $x->evaluate('string(term)', $term) : $term->textContent;
         $result[$label] = $key->textContent;
     }
@@ -46,25 +46,62 @@ foreach (['Mu.ZEE, Kunstmuseum aan zee'=>AxiellProfile::Muzee,'Musea Brugge'=>Ax
     $institution = ['MuseumTxt'=>'<institution.name>'.$museum.'</institution.name>'];
     $original = [];
     foreach ([$native,AxiellProfile::Vkc] as $profile) {
+        $needed = $profile === AxiellProfile::Vkc ? ['content.motif.general']
+            : ($native === AxiellProfile::Muzee ? array_keys($paired) : ['object_category', 'production.period', 'content.motif.general']);
         [$x,$warnings] = mapped($institution+$termsFor(['Term A','Term B','Term A','Één & twee']), $profile);
         foreach ($paired as $field=>$_) {
+            if (!in_array($field, $needed, true)) {
+                check($x->evaluate('count(/record/'.$field.'.lref)') === 0.0, 'Unused synthetic ID generated: '.$field);
+                $labels = [];
+                foreach ($x->query('/record/'.$field) as $term) {
+                    $label = $x->query('term', $term)->length ? $x->evaluate('string(term)', $term) : $term->textContent;
+                    $labels[$label] = true;
+                }
+                check(count($labels) === 3, 'Removing an unused ID lost source terms.');
+                continue;
+            }
             $a = associations($x,$field);
             check(count($a) === 3 && isset($a['Term A'],$a['Term B'],$a['Één & twee']), 'Lost or altered source label.');
             if (isset($original[$field])) check($a === $original[$field], 'Native and VKC term identities disagree.');
             $original[$field] = $a;
         }
         [$reordered] = mapped($institution+$termsFor(['Één & twee','Term B','Term A'])+['NumberTxt'=>'<object_number>OTHER</object_number>'], $profile);
-        foreach ($paired as $field=>$_) check(associations($reordered,$field) === $original[$field], 'Term identity depends on order, duplicates, object or run.');
+        foreach ($needed as $field) check(associations($reordered,$field) === $original[$field], 'Term identity depends on order, duplicates, object or run.');
     }
-    check(count(array_unique(array_map(fn($a)=>$a['Term A'],$original))) === count($paired), 'Different fields share a local identity.');
+    check(count(array_unique(array_map(fn($a)=>$a['Term A'],$original))) === count($original), 'Different fields share a local identity.');
     $specific = ['MotifSpecificTxt'=>'<Content_motif_specific><content.motif.specific>Detail</content.motif.specific><broader_term>Context</broader_term></Content_motif_specific>'];
     [$flat] = mapped($institution+$specific, $native);
     [$nested] = mapped($institution+$specific, AxiellProfile::Vkc);
-    check(associations($flat, 'content.motif.specific') === associations($nested, 'content.motif.specific'), 'Extra source context changed the term identity across profiles.');
+    check($nested->evaluate('count(/record/content.motif.specific.lref)') === 0.0, 'Unused VKC specific-motif ID generated.');
+    if ($native === AxiellProfile::Muzee) check(count(associations($flat, 'content.motif.specific')) === 1, 'Native Mu.ZEE specific motif needs a key.');
+    else check($flat->evaluate('count(/record/content.motif.specific.lref)') === 0.0, 'Unused Brugge specific-motif ID generated.');
     check($nested->evaluate('string(/record/content.motif.specific/broader_term)') === 'Context', 'Broader term lost while adding a local key.');
     $byMuseum[] = $original;
 }
 check($byMuseum[0]['object_category']['Term A'] !== $byMuseum[1]['object_category']['Term A'], 'Museum vocabularies conflated.');
+
+// Pure Iconclass lists need no local keys; mixed lists retain positional alignment.
+$iconclass = '<content.motif.general>the arts; artists</content.motif.general>'
+    .'<content.motif.general.source>http://iconclass.org/</content.motif.general.source>'
+    .'<content.motif.general.term.number>48C</content.motif.general.term.number>';
+foreach (['Mu.ZEE, Kunstmuseum aan zee', 'Musea Brugge'] as $institution) {
+    $museum = ['MuseumTxt'=>'<institution.name>'.$institution.'</institution.name>'];
+    [$onlyIconclass] = mapped($museum + ['MotifGeneralTxt'=>$iconclass], AxiellProfile::Vkc);
+    check($onlyIconclass->evaluate('count(/record/content.motif.general.lref)') === 0.0, 'Pure Iconclass list received an unused local ID.');
+    check($onlyIconclass->evaluate('string(/record/content.motif.general/term.code)') === '48C', 'Real Iconclass code lost.');
+    $plain = '<content.motif.general>Plain motif</content.motif.general>';
+    $otherIconclass = str_replace(['the arts; artists', '48C'], ['historical persons', '61B'], $iconclass);
+    [$mixed] = mapped($museum + ['MotifGeneralTxt'=>$iconclass.$plain.$otherIconclass], AxiellProfile::Vkc);
+    check($mixed->evaluate('count(/record/content.motif.general)') === 3.0, 'Mixed motif rows lost.');
+    $keys = associations($mixed, 'content.motif.general');
+    check(count($keys) === 3 && isset($keys['the arts; artists'], $keys['Plain motif'], $keys['historical persons']), 'Mixed motif keys shifted or collapsed.');
+    check($mixed->evaluate('string(/record/content.motif.general[2]/term)') === 'Plain motif', 'Plain motif changed position.');
+    check($mixed->evaluate('string(/record/content.motif.general[3]/term.code)') === '61B', 'Trailing Iconclass code lost.');
+}
+foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
+    [$msk] = mapped(['MuseumTxt'=>'<institution.name>Museum voor Schone Kunsten Gent</institution.name>'] + $termsFor(['Term A', 'Term B']), $profile);
+    foreach ($paired as $field=>$_) check($msk->evaluate('count(/record/'.$field.'.lref)') === 0.0, 'MSK received a generated term ID.');
+}
 
 $museum = ['MuseumTxt'=>'<institution.name>Mu.ZEE, Kunstmuseum aan zee</institution.name>'];
 $materials = static fn(array $notes): string => implode('', array_map(static fn($note)=>'<Material><material>papier</material><material.part>drager</material.part><material.notes>'.htmlspecialchars($note,ENT_QUOTES|ENT_XML1,'UTF-8').'</material.notes></Material>', $notes));

@@ -96,11 +96,23 @@ Inscripties kunnen alleen een type bevatten. Tentoonstellingsorganisatoren en
 -plaatsen blijven bij hun tentoonstelling.
 
 De ongewijzigde Brugge- en Mu.ZEE-fixes gebruiken bij sommige termen een parallelle
-lijst met ID's. Daarvoor maakt de adapter stabiele sleutels met prefix
-`adapter-local:`, afgeleid van museum, veld en term. Het zijn lokale koppelsleutels,
-geen oorspronkelijke thesaurusnummers. Zo blijven meerdere termen behouden en
-verschijnen geen interne Perl-verwijzingen (`HASH(...)`) in de LIDO-uitvoer.
-De bestaande fixes zetten hierbij nog hun vaste bronlabel `Adlib`.
+lijst met ID's voor groepering. Alleen daarvoor maakt de adapter korte, ondoorzichtige
+codes van 16 hexadecimale tekens, zonder prefix. Ze zijn stabiel per museum, veld en
+term, zodat een rebuild geen willekeurig wisselende ID's oplevert. Het zijn lokale
+koppelsleutels, geen MuseumPlus- of thesaurusnummers.
+
+| Uitvoer | Velden met gegenereerde koppelsleutels |
+|---|---|
+| Mu.ZEE | Objectcategorie, periode, algemeen en specifiek motief, verwervingsmethode |
+| Musea Brugge | Objectcategorie, periode, algemeen motief |
+| VKC, voor Mu.ZEE en Brugge | Alleen algemeen motief, als minstens één motief buiten de Iconclass-verwerking valt |
+| MSK | Geen |
+
+Een zuivere Iconclass-lijst in VKC krijgt geen lokale sleutels. Gemengde lijsten
+houden één sleutel per motief om de parallelle lijsten uitgelijnd te houden.
+Overbodige lokale ID's voor objectcategorie en periode in VKC worden niet meer
+toegevoegd. Bestaande bronverwijzingen en termen blijven behouden. De bestaande
+fixes zetten bij gebruikte lokale ID's nog hun vaste bronlabel `Adlib`.
 
 De algemene materiaalomschrijving komt uit `physical_description`. Voor Mu.ZEE
 geeft de adapter die ook door als `material_description`, de veldnaam die hun

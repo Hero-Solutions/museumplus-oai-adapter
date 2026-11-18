@@ -49,7 +49,11 @@ foreach (AxiellProfile::cases() as $profile) {
     check($x->evaluate('count(/record/Dimension)') === 1.0 && $x->evaluate('string(/record/Dimension/dimension.type)') === 'afmetingen object', 'Guessed missing measurements.');
     check($x->evaluate('string(/record/Dimension/dimension.notes)') === 'met lijst', 'Dimension note lost.');
     check($x->evaluate('count(/record/material_description)') === 0.0, 'Material description inferred from a Brugge note.');
-    check(str_starts_with($x->evaluate('string(/record/object_category.lref)'), 'adapter-local:musea_brugge:object_category:'), 'Scalar adapter-local category key missing.');
+    if ($profile === AxiellProfile::Brugge) {
+        check(preg_match('/^[0-9a-f]{16}$/D', $x->evaluate('string(/record/object_category.lref)')) === 1, 'Required short Brugge category key missing.');
+    } else {
+        check($x->evaluate('count(/record/object_category.lref)') === 0.0, 'Unnecessary category key generated outside the Brugge mapping.');
+    }
     check($x->evaluate('string(/record/object_category.uri)') === 'https://vocabulary.invalid/123', 'Category URI lost.');
 }
 [$x] = mapped(['MaterialDescriptionTxt'=>'<material_description>olieverf op doek</material_description>'], AxiellProfile::Muzee);

@@ -119,25 +119,47 @@ final class AxiellRecordMapper
         $this->addContentDates($elements, $record);
         foreach ($this->values($record, 'WebPublicationTxt::webpublication') as $tag) $elements[] = $this->enumeration('webpublication', $tag);
         $elements = $this->enumerations($elements, $warnings);
-        $elements = $profile->elements($elements);
-        if (in_array($museum, [AxiellProfile::Brugge, AxiellProfile::Muzee], true)) {
-            // Catmandu uses these scalar keys to associate parallel term/ID arrays.
-            // Empty XML becomes a Perl hash reference, not an empty string. These
-            // adapter-local keys identify labels, not MuseumPlus thesaurus entries.
-            $paired = [];
-            foreach ($elements as $element) {
-                $paired[] = $element;
-                if (in_array($element->name, ['object_category', 'production.period', 'content.motif.general', 'content.motif.specific', 'acquisition.method'], true)) {
-                    $label = $element->value;
-                    foreach ($element->children as $child) if ($child->name === 'term') $label = $child->value;
-                    if ($label === null || $label === '') throw new \LogicException('Cannot associate a term without a label: '.$element->name);
-                    $key = 'adapter-local:'.$museum->value.':'.$element->name.':'.hash('sha256', $label);
-                    $paired[] = new AxiellElement($element->name.'.lref', $key);
-                }
-            }
-            $elements = $paired;
-        }
+        $elements = $this->addLocalReferences($profile->elements($elements), $museum, $profile);
         return new AxiellRecord($record->objectNumber, $record->sourceIdentifier, $elements, $warnings);
+    }
+
+    /** Keep synthetic keys only where the existing fixes group terms by ID. */
+    private function addLocalReferences(array $elements, ?AxiellProfile $museum, AxiellProfile $profile): array
+    {
+        $fields = match ([$museum, $profile]) {
+            [AxiellProfile::Muzee, AxiellProfile::Muzee] => [
+                'object_category', 'production.period', 'content.motif.general', 'content.motif.specific', 'acquisition.method',
+            ],
+            [AxiellProfile::Brugge, AxiellProfile::Brugge] => [
+                'object_category', 'production.period', 'content.motif.general',
+            ],
+            [AxiellProfile::Muzee, AxiellProfile::Vkc], [AxiellProfile::Brugge, AxiellProfile::Vkc] => ['content.motif.general'],
+            default => [],
+        };
+        if ($fields === []) return $elements;
+
+        if ($profile === AxiellProfile::Vkc) {
+            $needsKeys = array_any($elements, static function (AxiellElement $element): bool {
+                if ($element->name !== 'content.motif.general') return false;
+                $sources = array_filter($element->children, static fn (AxiellElement $child): bool => $child->name === 'source');
+                return $sources === [] || !array_all($sources, static fn (AxiellElement $source): bool => self::vocabularySource($source->value ?? '') === self::ICONCLASS);
+            });
+            if (!$needsKeys) return $elements;
+            // Mixed lists need a key for every row: the fixes consume IDs by position.
+        }
+
+        $paired = [];
+        foreach ($elements as $element) {
+            $paired[] = $element;
+            if (!in_array($element->name, $fields, true)) continue;
+            $label = $element->value;
+            foreach ($element->children as $child) if ($child->name === 'term') $label = $child->value;
+            if ($label === null || $label === '') throw new \LogicException('Cannot associate a term without a label: '.$element->name);
+            // Short opaque IDs stay stable across objects, profiles and rebuilds.
+            $key = substr(hash('sha256', $museum->value."\0".$element->name."\0".$label), 0, 16);
+            $paired[] = new AxiellElement($element->name.'.lref', $key);
+        }
+        return $paired;
     }
 
     private function addExhibitions(array &$elements, RecordValues $record, array &$warnings, AxiellProfile $profile): void

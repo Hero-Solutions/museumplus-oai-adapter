@@ -106,11 +106,13 @@ try {
                 }
             }
             $x = mapFixture($reference, institution: $institution, profile: $profile, extraFields: $fields);
+            $needed = $profile === AxiellProfile::Vkc ? ['content.motif.general']
+                : ($museum === AxiellProfile::Muzee ? array_keys($pairedFields) : ['object_category', 'production.period', 'content.motif.general']);
             foreach ($pairedFields as $field => $_) {
                 check($x->evaluate('count(/record/'.$field.')') === 3.0, 'Current term lost.');
-                check($x->evaluate('count(/record/'.$field.'.lref)') === 3.0, 'Parallel term keys missing.');
+                check($x->evaluate('count(/record/'.$field.'.lref)') === (in_array($field, $needed, true) ? 3.0 : 0.0), 'Required key missing or unnecessary key generated: '.$field);
                 foreach ($x->query('/record/'.$field.'.lref') as $key) {
-                    check(str_starts_with($key->textContent, 'adapter-local:'.$museum->value.':'.$field.':'), 'Historical authority ID reused instead of an adapter-local key.');
+                    check(preg_match('/^[0-9a-f]{16}$/D', $key->textContent) === 1, 'Local key is not a short opaque ID.');
                 }
             }
         }
