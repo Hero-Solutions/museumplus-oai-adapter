@@ -8,18 +8,35 @@ use App\Axiell\AxiellProfile;
 $msk = ['MuseumTxt' => '<institution.name>Museum voor Schone Kunsten Gent</institution.name>'];
 $description = '<Description><description>Unlabelled first</description><description.name>Author A</description.name></Description>'
     .'<Description><description>English description</description><description.language>en</description.language></Description>'
-    .'<Description><description>Unlabelled second</description><description.date>2026</description.date></Description>';
+    .'<Description><description>Unlabelled third</description><description.date>2026</description.date></Description>';
 foreach ([AxiellProfile::Msk, AxiellProfile::Vkc] as $profile) {
-    [$x] = mapped($msk + ['DescriptionTxt' => $description], $profile);
-    check($x->evaluate('count(/record/Description)') === 5.0, 'Description slot count changed.');
-    check($x->evaluate('string(/record/Description[1]/description)') === '' && $x->evaluate('string(/record/Description[2]/description)') === '', 'Unlabelled description assigned a language.');
-    check($x->evaluate('string(/record/Description[3]/description)') === 'English description', 'Explicit English description shifted.');
-    check($x->evaluate('string(/record/Description[4]/description.name)') === 'Author A' && $x->evaluate('string(/record/Description[5]/description.date)') === '2026', 'Description context shifted.');
+    $extra = '<Description><description>German by position</description></Description>'
+        .'<Description><description>Fifth without a language</description></Description>'
+        .'<Description><description>Regional label</description><description.language>fr-CA</description.language></Description>'
+        .'<Description><description>Matching labels</description><description.language>Duits</description.language><description.language>de</description.language></Description>';
+    [$x] = mapped($msk + ['DescriptionTxt' => $description.$extra], $profile);
+    check($x->evaluate('count(/record/Description)') === 7.0, 'MSK descriptions gained or lost rows.');
+    foreach (['nl', 'en', 'en', 'de', '', 'fr-CA', 'de'] as $index => $code) {
+        $row = $index + 1;
+        check($x->evaluate("string(/record/Description[$row]/description.language)") === $code, "Incorrect language at MSK description $row.");
+    }
+    check($x->evaluate('string(/record/Description[2]/description)') === 'English description', 'Explicit description shifted from its source position.');
+    check($x->evaluate('string(/record/Description[1]/description.name)') === 'Author A' && $x->evaluate('string(/record/Description[3]/description.date)') === '2026', 'Description context shifted.');
+
+    $repeat = '<Description><description>Same text</description></Description>';
+    $conflict = '<Description><description>Ambiguous</description><description.language>en</description.language><description.language>fr</description.language></Description>';
+    [$x] = mapped($msk + ['DescriptionTxt' => '<Description><description.name>Editor only</description.name></Description>'.$repeat.$repeat.$conflict], $profile);
+    check($x->evaluate('count(/record/Description[description="Same text"])') === 2.0, 'Repeated text shifted the following positions.');
+    check($x->evaluate('count(/record/Description[1]/description.language)') === 0.0 && $x->evaluate('string(/record/Description[2]/description.language)') === 'nl' && $x->evaluate('string(/record/Description[3]/description.language)') === 'fr', 'A metadata-only row consumed a description position.');
+    check($x->evaluate('string(/record/Description[4]/description.language)') === 'und', 'Conflicting source labels received a positional language.');
     [$x] = mapped($msk, $profile);
     check($x->evaluate('count(/record/Description)') === 0.0, 'Empty description groups emitted without source text.');
 }
 [$x] = mapped(['MuseumTxt' => '<institution.name>Mu.ZEE, Kunstmuseum aan zee</institution.name>', 'DescriptionTxt' => $description], AxiellProfile::Vkc);
 check($x->evaluate('count(/record/Description)') === 4.0 && $x->evaluate('string(/record/Description[1]/description)') === '', 'Mu.ZEE VKC positional Dutch fallback still applies to unlabelled text.');
+[$x] = mapped(['MuseumTxt' => '<institution.name>Mu.ZEE, Kunstmuseum aan zee</institution.name>', 'DescriptionTxt' => $description
+    .'<Description><description>Dutch text</description><description.language>nl</description.language></Description>'], AxiellProfile::Vkc);
+check($x->evaluate('string(/record/Description[1]/description)') === 'Dutch text' && $x->evaluate('string(/record/Description[2]/description)') === 'Unlabelled first', 'Mu.ZEE lost its explicit Dutch description or the source order of its other texts.');
 foreach ([AxiellProfile::Brugge, AxiellProfile::Muzee] as $profile) {
     [$x] = mapped(['DescriptionTxt' => $description], $profile);
     check($x->evaluate('count(/record/Description)') === 3.0 && $x->evaluate('string(/record/Description[1]/description)') === 'Unlabelled first', 'Non-positional description contract changed.');
@@ -67,4 +84,4 @@ check($x->evaluate('string(/record/Title[1]/title)') === 'Nederlandse titel', 'E
 check($x->evaluate('string(/record/Title[2]/title)') === 'Original source title' && $x->evaluate('string(/record/Title[2]/title.type)') === 'oorspronkelijke titel', 'Original title/context discarded.');
 check($x->evaluate('string(/record/Titel_translation/title.language)') === 'Engels', 'English title moved to another language.');
 
-echo "PASS: positional language guards, unambiguous MSK production places, complete place names, explicit exhibition ranges, safe duration splitting and Dutch Brugge title selection\n";
+echo "PASS: MSK description languages, unambiguous MSK production places, complete place names, explicit exhibition ranges, safe duration splitting and Dutch Brugge title selection\n";

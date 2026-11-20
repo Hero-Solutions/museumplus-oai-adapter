@@ -126,8 +126,14 @@ taallabel (NL/FR/EN/DE). Zonder bruikbaar label worden ze overgeslagen en gemeld
 de adapter leidt de taal nooit af uit de positie. De Brugge-museumfix verwerkt
 maar één Nederlandse titel: een expliciete NL-vertaling komt daarom vooraan.
 De oorspronkelijke titel blijft daarnaast in de adapter-XML bewaard.
-Beschrijvingen zonder betrouwbare taal komen na de gereserveerde taalposities,
-zodat MSK en VKC ze zonder gegokt taallabel verwerken.
+
+Voor beschrijvingen van MSK Gent gebruiken de eigen datahub en VKC de taal van
+elke beschrijving. Zonder taalcode krijgen de eerste vier teksten in MuseumPlus
+achtereenvolgens Nederlands, Frans, Engels en Duits. Vanaf de vijfde tekst is een
+expliciete taal nodig. Een ingevulde taal heeft altijd voorrang en verschuift
+de andere beschrijvingen niet. Tegenstrijdige taalvermeldingen krijgen `und`.
+De twee MSK-fixes lezen hiervoor `description.language` uit de adapter.
+
 Geboorte- en sterfteplaatsen blijven bij hun vervaardiger,
 objectrelaties bij hun bronverwijzing. Samengestelde afmetingen worden alleen
 opgesplitst wanneer types en waarden overeenkomen. Meerdere afmetingsteksten

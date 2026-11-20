@@ -21,7 +21,7 @@ final readonly class MuseumPlusRecordBuilder
 
     public function mappingVersion(): string
     {
-        return 'profiles-20261118-minimal-local-references:'.$this->publicationSelector->fingerprint().':'.$this->mapper->referenceFingerprint();
+        return 'profiles-20261120-msk-description-languages:'.$this->publicationSelector->fingerprint().':'.$this->mapper->referenceFingerprint();
     }
 
     /** @param (callable(array{field: string, message: string}): void)|null $onWarning

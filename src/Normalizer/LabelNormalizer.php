@@ -18,6 +18,27 @@ final class LabelNormalizer
         };
     }
 
+    /** @param non-empty-list<string> $labels */
+    public function descriptionLanguageCode(array $labels): string
+    {
+        $codes = [];
+        foreach ($labels as $label) {
+            $code = match ($this->titleLanguage($label)) {
+                'Nederlands' => 'nl',
+                'Frans' => 'fr',
+                'Engels' => 'en',
+                'Duits' => 'de',
+                default => trim($label),
+            };
+            if (!preg_match('/^[a-z]{2,3}(?:-[a-z0-9]{1,8})*$/iD', $code)) {
+                return 'und';
+            }
+            $codes[strtolower($code)] = $code;
+        }
+
+        return count($codes) === 1 ? reset($codes) : 'und';
+    }
+
     /** Only known public labels; never substitute internal locations or packaging notes. */
     public function publicLocation(string $value): ?string
     {

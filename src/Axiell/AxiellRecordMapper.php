@@ -356,37 +356,41 @@ final class AxiellRecordMapper
      */
     private function addDescriptions(array &$elements, RecordValues $record, AxiellProfile $profile): void
     {
+        $isMsk = $profile === AxiellProfile::Msk || ($profile === AxiellProfile::Vkc && $this->isMsk($record));
         $rows = $this->rows($record, [
             'description' => 'Beschrijving::Description/description',
             'description.name' => 'Beschrijving::Description/description.name',
             'description.date' => 'Beschrijving::Description/description.date',
             'description.language' => 'Beschrijving::Description/description.language',
-        ]);
-        // These fixes assign languages by row position. Unknown languages belong
-        // after the reserved slots, where the fixes emit unlabelled descriptions.
-        $slots = $profile === AxiellProfile::Msk || ($profile === AxiellProfile::Vkc && $this->isMsk($record))
-            ? ['Nederlands', 'Frans', 'Engels']
-            : ($profile === AxiellProfile::Vkc && $this->museumGroups->profile($record) === AxiellProfile::Muzee ? ['Nederlands'] : []);
-        if ($rows === [] || $slots === []) {
-            foreach ($rows as $row) {
-                $children = [];
-                foreach ($row as $name => $values) array_push($children, ...$this->texts($name, $values));
-                $this->addNode($elements, 'Description', $children);
+        ], keepDuplicates: $isMsk);
+
+        // The Mu.ZEE VKC fix labels its first row as Dutch, even without a source language.
+        if ($rows !== [] && $profile === AxiellProfile::Vkc && $this->museumGroups->profile($record) === AxiellProfile::Muzee) {
+            $dutch = array_find_key($rows, fn (array $row): bool => count($row['description.language']) === 1
+                && $this->labelNormalizer->titleLanguage($row['description.language'][0]) === 'Nederlands');
+            if ($dutch === null) {
+                $elements[] = new AxiellElement('Description', null, [new AxiellElement('description', '')]);
+            } else {
+                $first = $rows[$dutch];
+                unset($rows[$dutch]);
+                array_unshift($rows, $first);
             }
-            return;
         }
-        $reserved = array_fill_keys($slots, []);
-        $remaining = [];
+
+        $position = 0;
+        $fallback = ['nl', 'fr', 'en', 'de'];
         foreach ($rows as $row) {
-            $language = count($row['description.language']) === 1 ? $this->labelNormalizer->titleLanguage($row['description.language'][0]) : null;
-            if ($language !== null && isset($reserved[$language]) && $reserved[$language] === []) $reserved[$language] = $row;
-            else $remaining[] = $row;
-        }
-        foreach ([...array_values($reserved), ...$remaining] as $row) {
+            if ($isMsk && $row['description'] !== []) {
+                if ($row['description.language'] !== []) {
+                    $row['description.language'] = [$this->labelNormalizer->descriptionLanguageCode($row['description.language'])];
+                } elseif (isset($fallback[$position])) {
+                    $row['description.language'] = [$fallback[$position]];
+                }
+                ++$position;
+            }
             $children = [];
             foreach ($row as $name => $values) array_push($children, ...$this->texts($name, $values));
-            // Deliberately explicit empty content: Catmandu must count this slot.
-            $elements[] = new AxiellElement('Description', null, $children ?: [new AxiellElement('description', '')]);
+            $this->addNode($elements, 'Description', $children);
         }
     }
 
@@ -1144,7 +1148,7 @@ final class AxiellRecordMapper
      *
      * @return list<array<string, list<string>>>
      */
-    private function rows(RecordValues $record, array $pathsByName): array
+    private function rows(RecordValues $record, array $pathsByName, bool $keepDuplicates = false): array
     {
         $firstPath = reset($pathsByName);
         $group = substr($firstPath, 0, (int) strrpos($firstPath, '/'));
@@ -1159,13 +1163,13 @@ final class AxiellRecordMapper
                 continue;
             }
 
-            $key = serialize($row);
-
-            if (isset($seen[$key])) {
-                continue;
+            if (!$keepDuplicates) {
+                $key = serialize($row);
+                if (isset($seen[$key])) {
+                    continue;
+                }
+                $seen[$key] = true;
             }
-
-            $seen[$key] = true;
             $rows[] = $row;
         }
 
